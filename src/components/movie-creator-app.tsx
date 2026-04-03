@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useEffectEvent, useState, useTransition } from "react";
 import Image from "next/image";
 import {
   ActionIcon,
@@ -18,7 +18,6 @@ import {
   SegmentedControl,
   SimpleGrid,
   Stack,
-  Table,
   Tabs,
   Text,
   TextInput,
@@ -48,18 +47,11 @@ import {
   IconLayoutSidebarRightExpand,
   IconPlayerPlay,
   IconSparkles,
-  IconTable,
   IconTrash,
   IconUpload,
   IconWand,
   IconZoomIn,
 } from "@tabler/icons-react";
-import {
-  createColumnHelper,
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-} from "@tanstack/react-table";
 import type {
   FrameView,
   ProjectSnapshot,
@@ -86,8 +78,6 @@ type ZoomTarget = {
   alt: string;
   title: string;
 };
-
-const columnHelper = createColumnHelper<FrameView>();
 const WORKSPACE_HEIGHT = "calc(100dvh - var(--app-shell-header-offset) - 2 * var(--app-shell-padding))";
 const DEFAULT_PROJECT_PATH =
   process.env.NEXT_PUBLIC_DEFAULT_PROJECT_PATH ?? "/Users/tsilva/Desktop/moviegen";
@@ -106,6 +96,14 @@ function transitionCanGenerate(transition: TransitionView) {
     transition.videoStatus !== "queued" &&
     transition.videoStatus !== "generating"
   );
+}
+
+function transitionCanConfirm(transition: TransitionView) {
+  return transition.promptStatus !== "blocked" && Boolean(transition.transitionPrompt.trim());
+}
+
+function transitionHasReviewableVersion(transition: TransitionView) {
+  return transition.versions.length > 0;
 }
 
 function transitionStatusColor(transition: TransitionView) {
@@ -381,6 +379,7 @@ type TransitionCardProps = {
   selected: boolean;
   onSelect: () => void;
   onEditPrompt: () => void;
+  onConfirmPrompt: () => void;
   onReview: () => void;
   onGenerate: () => void;
   onMovePair: () => void;
@@ -393,6 +392,7 @@ function TransitionCard({
   selected,
   onSelect,
   onEditPrompt,
+  onConfirmPrompt,
   onReview,
   onGenerate,
   onMovePair,
@@ -480,6 +480,19 @@ function TransitionCard({
               >
                 Edit prompt
               </Button>
+              {transition.promptStatus !== "confirmed" ? (
+                <Button
+                  size="compact-sm"
+                  variant="light"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onConfirmPrompt();
+                  }}
+                  disabled={!transitionCanConfirm(transition)}
+                >
+                  Confirm prompt
+                </Button>
+              ) : null}
               <Button
                 size="compact-sm"
                 variant="light"
@@ -497,6 +510,7 @@ function TransitionCard({
                   event.stopPropagation();
                   onReview();
                 }}
+                disabled={!transitionHasReviewableVersion(transition)}
               >
                 Review
               </Button>
@@ -665,60 +679,15 @@ function PromptEditorModal({
   );
 }
 
-function createFrameColumns(onSelect: (frame: FrameView) => void) {
-  return [
-    columnHelper.accessor("position", {
-      header: "#",
-      cell: (info) => info.getValue() + 1,
-    }),
-    columnHelper.accessor("title", {
-      header: "Title",
-      cell: (info) => (
-        <Button variant="subtle" px={0} onClick={() => onSelect(info.row.original)}>
-          {info.getValue() || `Frame ${info.row.original.position + 1}`}
-        </Button>
-      ),
-    }),
-    columnHelper.accessor("imagePrompt", {
-      header: "Image prompt",
-      cell: (info) => <Text lineClamp={2} size="sm">{info.getValue()}</Text>,
-    }),
-    columnHelper.accessor("status", {
-      header: "Status",
-      cell: (info) => <Badge>{info.getValue()}</Badge>,
-    }),
-    columnHelper.accessor("approvedVersion", {
-      header: "Approved image",
-      cell: (info) =>
-        info.row.original.approvedVersion ?? info.row.original.latestVersion ? (
-          <Box style={{ position: "relative", width: 88, height: 50, overflow: "hidden", borderRadius: 8 }}>
-            <Image
-              src={assetUrl(
-                (info.row.original.approvedVersion ?? info.row.original.latestVersion)?.thumbnailPath,
-              )}
-              alt=""
-              fill
-              unoptimized
-              sizes="88px"
-              style={{ objectFit: "cover" }}
-            />
-          </Box>
-        ) : (
-          <Text c="dimmed" size="xs">
-            None
-          </Text>
-        ),
-    }),
-    columnHelper.accessor("notes", {
-      header: "Notes",
-      cell: (info) => <Text lineClamp={2} size="sm">{info.getValue() || "—"}</Text>,
-    }),
-  ];
-}
-
 export function MovieCreatorApp() {
   const [snapshot, setSnapshot] = useState<ProjectSnapshot | null>(null);
-  const [projectPath, setProjectPath] = useState("");
+  const [projectPath, setProjectPath] = useState(() => {
+    if (typeof window === "undefined") {
+      return DEFAULT_PROJECT_PATH;
+    }
+
+    return window.localStorage.getItem("moviegen:lastProjectPath") || DEFAULT_PROJECT_PATH;
+  });
   const [bulkInput, setBulkInput] = useState("");
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget>(null);
   const [promptEditorTarget, setPromptEditorTarget] = useState<PromptEditorTarget>(null);
@@ -732,18 +701,48 @@ export function MovieCreatorApp() {
   const [isPending, startTransition] = useTransition();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
+  async function loadProject(pathValue: string) {
+    try {
+      const result = await requestJson<ProjectSnapshot>("/api/project/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectPath: pathValue, createIfMissing: true }),
+      });
+      setSnapshot(result);
+      const nextSelectedFrameId =
+        result.frames.some((frame) => frame.id === result.manifest.ui.selectedFrameId)
+          ? result.manifest.ui.selectedFrameId
+          : result.frames[0]?.id ?? null;
+      const nextSelectedTransitionId =
+        result.transitions.some((transition) => transition.id === result.manifest.ui.selectedTransitionId)
+          ? result.manifest.ui.selectedTransitionId
+          : result.transitions[0]?.id ?? null;
+      setSelectedFrameId(nextSelectedFrameId);
+      setSelectedTransitionId(nextSelectedTransitionId);
+      setInspectorTab(nextSelectedFrameId ? "frame" : "transition");
+      window.localStorage.setItem("moviegen:lastProjectPath", pathValue);
+      notifications.show({ color: "teal", message: `Opened ${pathValue}` });
+    } catch (error) {
+      notifications.show({ color: "red", message: error instanceof Error ? error.message : "Open failed" });
+    }
+  }
+
+  async function refreshProject() {
+    const result = await requestJson<ProjectSnapshot>("/api/project");
+    setSnapshot(result);
+  }
+
+  const loadProjectEffect = useEffectEvent((pathValue: string) => {
+    void loadProject(pathValue);
+  });
+
   useEffect(() => {
-    const storedProjectPath = window.localStorage.getItem("moviegen:lastProjectPath");
-    const initialProjectPath = storedProjectPath || DEFAULT_PROJECT_PATH;
-
-    setProjectPath(initialProjectPath);
-
-    if (!storedProjectPath && !DEFAULT_PROJECT_PATH) {
+    if (!projectPath) {
       return;
     }
 
-    void loadProject(initialProjectPath);
-  }, []);
+    loadProjectEffect(projectPath);
+  }, [projectPath]);
 
   useEffect(() => {
     const hasActiveJobs = snapshot?.manifest.jobs.some(
@@ -781,45 +780,6 @@ export function MovieCreatorApp() {
         transition.videoStatus !== "generating",
     )
     .map((transition) => transition.id);
-
-  const frameColumns = useMemo(() => createFrameColumns((frame) => {
-    setSelectedFrameId(frame.id);
-    setSelectedTransitionId(null);
-    setInspectorTab("frame");
-  }), []);
-
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const table = useReactTable({
-    data: frames,
-    columns: frameColumns,
-    getCoreRowModel: getCoreRowModel(),
-  });
-
-  async function loadProject(pathValue: string) {
-    try {
-      const result = await requestJson<ProjectSnapshot>("/api/project/open", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectPath: pathValue, createIfMissing: true }),
-      });
-      setSnapshot(result);
-      const nextSelectedFrameId =
-        result.frames.some((frame) => frame.id === result.manifest.ui.selectedFrameId)
-          ? result.manifest.ui.selectedFrameId
-          : result.frames[0]?.id ?? null;
-      const nextSelectedTransitionId =
-        result.transitions.some((transition) => transition.id === result.manifest.ui.selectedTransitionId)
-          ? result.manifest.ui.selectedTransitionId
-          : result.transitions[0]?.id ?? null;
-      setSelectedFrameId(nextSelectedFrameId);
-      setSelectedTransitionId(nextSelectedTransitionId);
-      setInspectorTab(nextSelectedFrameId ? "frame" : "transition");
-      window.localStorage.setItem("moviegen:lastProjectPath", pathValue);
-      notifications.show({ color: "teal", message: `Opened ${pathValue}` });
-    } catch (error) {
-      notifications.show({ color: "red", message: error instanceof Error ? error.message : "Open failed" });
-    }
-  }
 
   async function mutate<T extends ApiResult>(url: string, init: RequestInit, successMessage?: string) {
     try {
@@ -867,11 +827,6 @@ export function MovieCreatorApp() {
     }
   }
 
-  async function refreshProject() {
-    const result = await requestJson<ProjectSnapshot>("/api/project");
-    setSnapshot(result);
-  }
-
   function persistUiState(update: Record<string, unknown>) {
     void requestJson<ProjectSnapshot>("/api/project/ui", {
       method: "POST",
@@ -880,7 +835,6 @@ export function MovieCreatorApp() {
     }).then(setSnapshot).catch(() => {});
   }
 
-  const viewMode = snapshot?.manifest.ui.viewMode ?? "sequence";
   const filter = snapshot?.manifest.ui.filter ?? "all";
   const filteredFrames = frames.filter((frame) => {
     if (filter === "needsAttention") {
@@ -933,6 +887,18 @@ export function MovieCreatorApp() {
       setPromptEditorTarget(null);
       setPromptDraft("");
     }
+  }
+
+  async function confirmTransitionPrompt(transitionId: string, prompt: string) {
+    return mutate(
+      `/api/transitions/${transitionId}/confirm-prompt`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      },
+      "Transition confirmed",
+    );
   }
 
   return (
@@ -1015,17 +981,6 @@ export function MovieCreatorApp() {
             <Card withBorder radius="lg" p="md">
               <Stack gap="sm">
                 <Text fw={600}>Filters</Text>
-                <SegmentedControl
-                  fullWidth
-                  value={viewMode}
-                  onChange={(value) => {
-                    persistUiState({ viewMode: value });
-                  }}
-                  data={[
-                    { label: "Sequence", value: "sequence" },
-                    { label: "Table", value: "table" },
-                  ]}
-                />
                 <SegmentedControl
                   fullWidth
                   value={filter}
@@ -1111,7 +1066,7 @@ export function MovieCreatorApp() {
                 <Tabs.Tab value="frame" leftSection={<IconLayoutList size={14} />}>
                   Frame
                 </Tabs.Tab>
-                <Tabs.Tab value="transition" leftSection={<IconTable size={14} />}>
+                <Tabs.Tab value="transition" leftSection={<IconPlayerPlay size={14} />}>
                   Transition
                 </Tabs.Tab>
               </Tabs.List>
@@ -1304,18 +1259,8 @@ export function MovieCreatorApp() {
                     <Group grow>
                       <Button
                         variant="subtle"
-                        onClick={() =>
-                          void mutate(
-                            `/api/transitions/${selectedTransition.id}/confirm-prompt`,
-                            {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ prompt: selectedTransition.transitionPrompt }),
-                            },
-                            "Transition confirmed",
-                          )
-                        }
-                        disabled={!selectedTransition.transitionPrompt.trim() || selectedTransition.promptStatus === "blocked"}
+                        onClick={() => void confirmTransitionPrompt(selectedTransition.id, selectedTransition.transitionPrompt)}
+                        disabled={!transitionCanConfirm(selectedTransition)}
                       >
                         Confirm prompt
                       </Button>
@@ -1335,10 +1280,19 @@ export function MovieCreatorApp() {
 	                      >
 	                        {selectedTransitionIsGenerating ? "Generating…" : "Generate"}
 	                      </Button>
-                      <Button variant="light" onClick={() => setReviewTarget({ type: "transition", transition: selectedTransition })}>
+                      <Button
+                        variant="light"
+                        onClick={() => setReviewTarget({ type: "transition", transition: selectedTransition })}
+                        disabled={!transitionHasReviewableVersion(selectedTransition)}
+                      >
                         Review
                       </Button>
                     </Group>
+                    {!transitionHasReviewableVersion(selectedTransition) ? (
+                      <Text c="dimmed" size="sm">
+                        No transition video candidates yet. Confirm the prompt, then generate one before reviewing.
+                      </Text>
+                    ) : null}
                     <Button
                       color="red"
                       variant="light"
@@ -1383,7 +1337,7 @@ export function MovieCreatorApp() {
                   </Stack>
                 </Card>
               </Flex>
-            ) : viewMode === "sequence" ? (
+            ) : (
               <Stack gap="md" pb="md">
                 <Group justify="space-between">
                   <Group>
@@ -1473,6 +1427,7 @@ export function MovieCreatorApp() {
                                 setInspectorTab("transition");
                                 openPromptEditor({ type: "transition", transition });
                               }}
+                              onConfirmPrompt={() => void confirmTransitionPrompt(transition.id, transition.transitionPrompt)}
                               onReview={() => setReviewTarget({ type: "transition", transition })}
                               onGenerate={() =>
                                 void mutate(
@@ -1501,35 +1456,6 @@ export function MovieCreatorApp() {
                 </DndContext>
                 {isPending ? <Text c="dimmed">Applying reorder...</Text> : null}
               </Stack>
-            ) : (
-              <Card withBorder radius="xl" p="md">
-                <Table highlightOnHover striped>
-                  <Table.Thead>
-                    {table.getHeaderGroups().map((headerGroup) => (
-                      <Table.Tr key={headerGroup.id}>
-                        {headerGroup.headers.map((header) => (
-                          <Table.Th key={header.id}>
-                            {header.isPlaceholder
-                              ? null
-                              : flexRender(header.column.columnDef.header, header.getContext())}
-                          </Table.Th>
-                        ))}
-                      </Table.Tr>
-                    ))}
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {table.getRowModel().rows.map((row) => (
-                      <Table.Tr key={row.id}>
-                        {row.getVisibleCells().map((cell) => (
-                          <Table.Td key={cell.id}>
-                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                          </Table.Td>
-                        ))}
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </Card>
             )}
           </ScrollArea>
         </AppShell.Main>

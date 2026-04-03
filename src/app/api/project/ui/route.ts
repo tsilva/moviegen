@@ -3,7 +3,6 @@ import { failure, ok } from "@/lib/http";
 import { mutateCurrentProject } from "@/lib/project-store";
 
 const requestSchema = z.object({
-  viewMode: z.enum(["sequence", "table"]).optional(),
   selectedFrameId: z.string().nullable().optional(),
   selectedTransitionId: z.string().nullable().optional(),
   inspectorOpen: z.boolean().optional(),

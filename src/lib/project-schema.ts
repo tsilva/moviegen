@@ -90,7 +90,7 @@ export const projectManifestSchema = z.object({
   jobs: z.array(generationJobSchema),
   ui: z.object({
     themeMode: z.literal("dark"),
-    viewMode: z.enum(["sequence", "table"]),
+    viewMode: z.enum(["sequence", "table"]).catch("sequence").transform(() => "sequence" as const),
     selectedFrameId: z.string().nullable(),
     selectedTransitionId: z.string().nullable(),
     inspectorOpen: z.boolean(),

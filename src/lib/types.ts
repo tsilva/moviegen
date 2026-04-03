@@ -1,7 +1,6 @@
 export type ReviewerDecision = "approved" | "rejected" | "unreviewed";
 export type JobStatus = "queued" | "running" | "completed" | "error";
 export type SequenceScope = "active" | "archived";
-export type ViewMode = "sequence" | "table";
 export type GenerationProvider = "mock" | "atlas";
 
 export type ProjectMeta = {
@@ -87,7 +86,7 @@ export type GenerationJob = {
 
 export type PersistedUiState = {
   themeMode: "dark";
-  viewMode: ViewMode;
+  viewMode: "sequence";
   selectedFrameId: string | null;
   selectedTransitionId: string | null;
   inspectorOpen: boolean;
