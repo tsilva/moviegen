@@ -39,6 +39,7 @@ import {
   IconArrowsShuffle,
   IconDotsVertical,
   IconFolderOpen,
+  IconPlayerPause,
   IconPlayerPlay,
   IconPlus,
   IconRefresh,
@@ -64,6 +65,15 @@ type ZoomTarget = {
   src: string;
   alt: string;
   title: string;
+};
+
+type MoviePlaylistEntry = {
+  clipId: string;
+  transitionId: string;
+  label: string;
+  src: string;
+  posterSrc: string | undefined;
+  model: string;
 };
 
 type MovieCreatorAppProps = {
@@ -249,6 +259,56 @@ function transitionDescriptor(transition: TransitionView) {
   return transition.transitionPrompt || "Untitled transition";
 }
 
+type InlinePromptInputProps = {
+  value: string;
+  placeholder: string;
+  name: string;
+  onChange: (value: string) => void;
+  onFocus: () => void;
+  onCommit: (value: string) => void;
+};
+
+function InlinePromptInput({
+  value,
+  placeholder,
+  name,
+  onChange,
+  onFocus,
+  onCommit,
+}: InlinePromptInputProps) {
+  return (
+    <TextInput
+      value={value}
+      onChange={(event) => onChange(event.currentTarget.value)}
+      onFocus={onFocus}
+      onBlur={(event) => onCommit(event.currentTarget.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          event.currentTarget.blur();
+        }
+      }}
+      placeholder={placeholder}
+      name={name}
+      autoComplete="off"
+      variant="unstyled"
+      onClick={(event) => event.stopPropagation()}
+      styles={{
+        input: {
+          fontSize: "1rem",
+          fontWeight: 600,
+          lineHeight: 1.35,
+          color: "white",
+          padding: 0,
+          minHeight: "auto",
+          height: "auto",
+          textOverflow: "ellipsis",
+        },
+      }}
+    />
+  );
+}
+
 async function requestJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const response = await fetch(input, init);
   const data = await response.json();
@@ -391,6 +451,8 @@ type AssetGalleryProps<TVersion extends FrameVersion | TransitionVersion> = {
   selectedTileId: string;
   pending: boolean;
   kind: "frame" | "transition";
+  addTileDisabled?: boolean;
+  addTileDescription?: string;
   onSelectAdd: () => void;
   onSelectVersion: (versionId: string) => void;
 };
@@ -401,6 +463,8 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
   selectedTileId,
   pending,
   kind,
+  addTileDisabled = false,
+  addTileDescription,
   onSelectAdd,
   onSelectVersion,
 }: AssetGalleryProps<TVersion>) {
@@ -417,6 +481,7 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
       </Group>
       <SimpleGrid cols={{ base: 2, md: 4 }} spacing="sm">
         <UnstyledButton
+          disabled={addTileDisabled}
           onClick={onSelectAdd}
           style={{
             display: "block",
@@ -427,6 +492,8 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
                 : "1px solid rgba(255,255,255,0.08)",
             background: selectedTileId === GALLERY_ADD_TILE_ID ? "rgba(30, 70, 92, 0.36)" : "rgba(255,255,255,0.02)",
             overflow: "hidden",
+            opacity: addTileDisabled ? 0.6 : 1,
+            cursor: addTileDisabled ? "not-allowed" : "pointer",
           }}
         >
           <Flex
@@ -441,7 +508,9 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
               {pending ? "Generating" : "Add Asset"}
             </Text>
             <Text c="dimmed" size="xs" ta="center">
-              {pending ? "Waiting for output" : kind === "frame" ? "Generate a new frame" : "Generate a new clip"}
+              {pending
+                ? "Waiting for output"
+                : addTileDescription ?? (kind === "frame" ? "Generate a new frame" : "Generate a new clip")}
             </Text>
           </Flex>
         </UnstyledButton>
@@ -652,9 +721,20 @@ function FrameQueueCard({
 
             <Group justify="space-between" align="flex-start" wrap="nowrap">
               <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
-                <Text fw={600} lineClamp={2}>
-                  {frameDescriptor(frame)}
-                </Text>
+                {selected ? (
+                  <InlinePromptInput
+                    value={promptValue}
+                    onChange={onPromptChange}
+                    onFocus={onPromptFocus}
+                    onCommit={onPromptCommit}
+                    placeholder="Untitled frame"
+                    name={`frame-prompt-${frame.id}`}
+                  />
+                ) : (
+                  <Text fw={600} lineClamp={2}>
+                    {frameDescriptor(frame)}
+                  </Text>
+                )}
               </Stack>
             </Group>
 
@@ -668,18 +748,6 @@ function FrameQueueCard({
           <>
             <Divider color="rgba(255,255,255,0.08)" />
             <Stack gap="md" onClick={(event) => event.stopPropagation()}>
-              <Textarea
-                minRows={4}
-                value={promptValue}
-                onChange={(event) => onPromptChange(event.currentTarget.value)}
-                onFocus={onPromptFocus}
-                onBlur={(event) => onPromptCommit(event.currentTarget.value)}
-                placeholder="Describe the frame…"
-                name={`frame-prompt-${frame.id}`}
-                autosize
-                maxRows={10}
-                autoComplete="off"
-              />
               <Switch
                 checked={frame.usePreviousFrameAsReference}
                 onChange={(event) => onReferenceModeChange(event.currentTarget.checked)}
@@ -754,7 +822,6 @@ type TransitionQueueCardProps = {
   onPromptChange: (value: string) => void;
   onPromptFocus: () => void;
   onPromptCommit: (value: string) => void;
-  onSelectGalleryAdd: () => void;
   onGenerateFromGallery: () => void;
   onApproveVersion: (versionId: string) => void;
 };
@@ -772,7 +839,6 @@ function TransitionQueueCard({
   onPromptChange,
   onPromptFocus,
   onPromptCommit,
-  onSelectGalleryAdd,
   onGenerateFromGallery,
   onApproveVersion,
 }: TransitionQueueCardProps) {
@@ -780,7 +846,6 @@ function TransitionQueueCard({
   const fromPreview = transition.fromFrame.currentVersion ?? transition.fromFrame.latestVersion;
   const toPreview = transition.toFrame.currentVersion ?? transition.toFrame.latestVersion;
   const isPending = transition.videoStatus === "queued" || transition.videoStatus === "generating";
-  const addTileSelected = selectedGalleryTileId === GALLERY_ADD_TILE_ID;
   const canGenerate =
     !isPending &&
     transition.blockedByFrameIds.length === 0 &&
@@ -893,9 +958,20 @@ function TransitionQueueCard({
 
             <Group justify="space-between" align="flex-start" wrap="nowrap">
               <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
-                <Text fw={600} lineClamp={2}>
-                  {transitionDescriptor(transition)}
-                </Text>
+                {selected ? (
+                  <InlinePromptInput
+                    value={promptValue}
+                    onChange={onPromptChange}
+                    onFocus={onPromptFocus}
+                    onCommit={onPromptCommit}
+                    placeholder="Untitled transition"
+                    name={`transition-prompt-${transition.id}`}
+                  />
+                ) : (
+                  <Text fw={600} lineClamp={2}>
+                    {transitionDescriptor(transition)}
+                  </Text>
+                )}
               </Stack>
             </Group>
 
@@ -909,61 +985,17 @@ function TransitionQueueCard({
           <>
             <Divider color="rgba(255,255,255,0.08)" />
             <Stack gap="md" onClick={(event) => event.stopPropagation()}>
-              <Textarea
-                minRows={4}
-                value={promptValue}
-                onChange={(event) => onPromptChange(event.currentTarget.value)}
-                onFocus={onPromptFocus}
-                onBlur={(event) => onPromptCommit(event.currentTarget.value)}
-                placeholder="Describe the motion between these frames…"
-                name={`transition-prompt-${transition.id}`}
-                autosize
-                maxRows={10}
-                autoComplete="off"
-              />
               <AssetGallery
                 title="Clip Gallery"
                 versions={transition.galleryVersions}
                 selectedTileId={selectedGalleryTileId}
                 pending={isPending}
                 kind="transition"
-                onSelectAdd={onSelectGalleryAdd}
+                addTileDisabled={!canGenerate}
+                addTileDescription={generateDisabledReason ?? undefined}
+                onSelectAdd={onGenerateFromGallery}
                 onSelectVersion={onApproveVersion}
               />
-              {addTileSelected ? (
-                <Card withBorder radius="lg" p="sm" style={{ background: "rgba(255,255,255,0.02)" }}>
-                  <Stack gap="xs">
-                    <Group justify="space-between" align="center">
-                      <Text fw={600} size="sm">
-                        {isPending ? "Generation In Progress" : "Generate New Clip"}
-                      </Text>
-                      {generateDisabledReason ? (
-                        <Badge color="gray" variant="light">
-                          Unavailable
-                        </Badge>
-                      ) : null}
-                    </Group>
-                    <Text c="dimmed" size="sm">
-                      {isPending
-                        ? "This slot will be replaced by the finished clip, then a fresh add tile will return to the gallery."
-                        : "Generate a fresh clip for the current prompt revision and current frame pair."}
-                    </Text>
-                    {generateDisabledReason ? (
-                      <Text c="dimmed" size="sm">
-                        {generateDisabledReason}
-                      </Text>
-                    ) : null}
-                    <Button
-                      leftSection={<IconPlayerPlay size={16} aria-hidden="true" />}
-                      onClick={onGenerateFromGallery}
-                      disabled={!canGenerate}
-                      loading={isPending}
-                    >
-                      Generate Clip
-                    </Button>
-                  </Stack>
-                </Card>
-              ) : null}
             </Stack>
           </>
         ) : null}
@@ -1030,8 +1062,11 @@ export function MovieCreatorApp({
   const [framePromptDraft, setFramePromptDraft] = useState("");
   const [transitionPromptDraft, setTransitionPromptDraft] = useState("");
   const [gallerySelection, setGallerySelection] = useState<Record<string, string>>({});
+  const [movieCursor, setMovieCursor] = useState(0);
+  const [moviePlaying, setMoviePlaying] = useState(false);
   const [isPending, startTransition] = useTransition();
   const previousPendingByEntryRef = useRef<Record<string, boolean>>({});
+  const movieVideoRef = useRef<HTMLVideoElement | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
   const normalizedProjectPath = projectPath.trim();
 
@@ -1081,6 +1116,9 @@ export function MovieCreatorApp({
       setSelectedTransitionId(nextSelection.selectedTransitionId);
       setGallerySelection({});
       previousPendingByEntryRef.current = {};
+      setMovieCursor(0);
+      setMoviePlaying(false);
+      movieVideoRef.current?.pause();
       setFramePromptDraft(
         result.frames.find((frame) => frame.id === nextSelection.selectedFrameId)?.imagePrompt ?? "",
       );
@@ -1219,8 +1257,29 @@ export function MovieCreatorApp({
 
   const frames = snapshot?.frames ?? [];
   const transitions = snapshot?.transitions ?? [];
+  const viewMode = snapshot?.manifest.ui.viewMode ?? "sequence";
   const filter = snapshot?.manifest.ui.filter ?? "needsRepair";
   const transitionMap = new Map(transitions.map((transition) => [transition.fromFrameId, transition]));
+  const moviePlaylist: MoviePlaylistEntry[] = transitions.flatMap((transition) => {
+    if (!transition.currentVideo) {
+      return [];
+    }
+
+    return [
+      {
+        clipId: transition.currentVideo.id,
+        transitionId: transition.id,
+        label: transitionLabel(transition),
+        src: assetUrl(transition.currentVideo.outputPath),
+        posterSrc: assetUrl(transition.currentVideo.posterPath) || undefined,
+        model: transition.currentVideo.model,
+      },
+    ];
+  });
+  const missingMovieTransitions = transitions.filter((transition) => transition.currentVideo == null);
+  const movieIndex = moviePlaylist.length ? Math.min(movieCursor, moviePlaylist.length - 1) : 0;
+  const activeMovieClip = moviePlaylist[movieIndex] ?? null;
+  const movieIsPlaying = moviePlaying && activeMovieClip != null;
 
   function shouldShowFrame(frame: FrameView) {
     if (reorderMode) {
@@ -1261,6 +1320,24 @@ export function MovieCreatorApp({
     transitions.filter((transition) => transition.nextAction === "generate" || transition.nextAction === "write_prompt").length;
   const stableCount = frames.filter((frame) => frame.status === "approved").length +
     transitions.filter((transition) => transition.videoStatus === "approved").length;
+
+  useEffect(() => {
+    const video = movieVideoRef.current;
+    if (!video) {
+      return;
+    }
+
+    video.currentTime = 0;
+
+    if (movieIsPlaying) {
+      void video.play().catch(() => {
+        setMoviePlaying(false);
+      });
+      return;
+    }
+
+    video.pause();
+  }, [activeMovieClip?.clipId, movieIsPlaying]);
 
   async function mutate<T extends ApiResult>(url: string, init: RequestInit, successMessage?: string) {
     try {
@@ -1518,6 +1595,41 @@ export function MovieCreatorApp({
     }
   }
 
+  function selectMovieClip(nextIndex: number) {
+    if (!moviePlaylist.length) {
+      return;
+    }
+
+    const boundedIndex = Math.max(0, Math.min(nextIndex, moviePlaylist.length - 1));
+    setMovieCursor(boundedIndex);
+  }
+
+  function toggleMoviePlayback() {
+    if (!activeMovieClip) {
+      return;
+    }
+
+    const video = movieVideoRef.current;
+
+    if (movieIsPlaying) {
+      video?.pause();
+      setMoviePlaying(false);
+      return;
+    }
+
+    if (video?.ended) {
+      video.currentTime = 0;
+    }
+
+    setMoviePlaying(true);
+
+    if (video) {
+      void video.play().catch(() => {
+        setMoviePlaying(false);
+      });
+    }
+  }
+
   return (
     <>
       <Box p="md" style={{ minHeight: "100dvh", overflow: "hidden" }}>
@@ -1614,160 +1726,347 @@ export function MovieCreatorApp({
                   {stableCount} Stable
                 </Badge>
                 <SegmentedControl
-                  value={filter}
-                  onChange={(value) => persistUiState({ filter: value })}
+                  value={viewMode}
+                  onChange={(value) => {
+                    if (value !== "play") {
+                      movieVideoRef.current?.pause();
+                      setMoviePlaying(false);
+                    }
+                    if (value === "play") {
+                      setMovieCursor(0);
+                    }
+                    persistUiState({ viewMode: value });
+                  }}
                   data={[
-                    { label: "Needs Repair", value: "needsRepair" },
-                    { label: "All", value: "all" },
+                    { label: "Sequence", value: "sequence" },
+                    { label: "Play", value: "play" },
                   ]}
                 />
+                {viewMode === "sequence" ? (
+                  <SegmentedControl
+                    value={filter}
+                    onChange={(value) => persistUiState({ filter: value })}
+                    data={[
+                      { label: "Needs Repair", value: "needsRepair" },
+                      { label: "All", value: "all" },
+                    ]}
+                  />
+                ) : null}
               </Group>
 
-              <DndContext
-                sensors={sensors}
-                collisionDetection={closestCenter}
-                onDragEnd={(event) => {
-                  if (!reorderMode) {
-                    return;
-                  }
+              {viewMode === "play" ? (
+                <Card withBorder radius="xl" p="md">
+                  <Stack gap="md">
+                    <Group justify="space-between" align="flex-start">
+                      <Box style={{ minWidth: 0 }}>
+                        <Title order={4}>Play Mode</Title>
+                        <Text c="dimmed" size="sm">
+                          Plays each current transition in sequence as one continuous movie preview.
+                        </Text>
+                      </Box>
+                      <Group gap="xs">
+                        <Button
+                          leftSection={
+                            movieIsPlaying ? <IconPlayerPause size={16} aria-hidden="true" /> : <IconPlayerPlay size={16} aria-hidden="true" />
+                          }
+                          onClick={toggleMoviePlayback}
+                          disabled={!activeMovieClip}
+                        >
+                          {movieIsPlaying ? "Pause" : "Play Movie"}
+                        </Button>
+                        <Button
+                          variant="light"
+                          onClick={() => selectMovieClip(movieIndex - 1)}
+                          disabled={!moviePlaylist.length || movieIndex === 0}
+                        >
+                          Previous
+                        </Button>
+                        <Button
+                          variant="light"
+                          onClick={() => selectMovieClip(movieIndex + 1)}
+                          disabled={!moviePlaylist.length || movieIndex >= moviePlaylist.length - 1}
+                        >
+                          Next
+                        </Button>
+                      </Group>
+                    </Group>
 
-                  const { active, over } = event;
-                  if (!over || active.id === over.id) {
-                    return;
-                  }
+                    <Group gap="sm">
+                      <Badge color={missingMovieTransitions.length > 0 ? "orange" : moviePlaylist.length ? "teal" : "gray"} size="lg">
+                        {moviePlaylist.length}/{transitions.length} current clips ready
+                      </Badge>
+                      <Text c="dimmed" size="sm">
+                        {missingMovieTransitions.length > 0
+                          ? `${missingMovieTransitions.length} transition${missingMovieTransitions.length === 1 ? "" : "s"} will be skipped until a current clip exists.`
+                          : moviePlaylist.length
+                            ? "The full current sequence is ready to play."
+                            : "Generate at least one current transition clip to start playback."}
+                      </Text>
+                    </Group>
 
-                  const oldIndex = frames.findIndex((frame) => frame.id === active.id);
-                  const newIndex = frames.findIndex((frame) => frame.id === over.id);
-                  const reordered = arrayMove(frames, oldIndex, newIndex).map((frame) => frame.id);
-
-                  startTransition(() => {
-                    void mutate(
-                      "/api/frames/reorder",
-                      {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ orderedFrameIds: reordered }),
-                      },
-                      "Frames reordered",
-                    );
-                  });
-                }}
-              >
-                <SortableContext items={frames.map((frame) => frame.id)} strategy={verticalListSortingStrategy}>
-                  <Stack gap="sm">
-                    {(reorderMode ? frames : visibleFrames).map((frame) => {
-                      const transition = transitionMap.get(frame.id) ?? null;
-                      return (
-                        <Stack key={frame.id} gap="sm">
-                          <FrameQueueCard
-                            frame={frame}
-                            selected={selectedFrameId === frame.id}
-                            reorderMode={reorderMode}
-                            promptValue={
-                              selectedFrameId === frame.id && activeEditor === "framePrompt"
-                                ? framePromptDraft
-                                : frame.imagePrompt
-                            }
-                            selectedGalleryTileId={getSelectedGalleryTileId(frame)}
-                            onSelect={() => selectFrame(frame.id)}
-                            onDelete={() => void deleteFrame(frame.id)}
-                            onZoom={setZoomTarget}
-                            onPromptChange={setFramePromptDraft}
-                            onPromptFocus={() => {
-                              setFramePromptDraft(frame.imagePrompt);
-                              setActiveEditor("framePrompt");
+                    <Card withBorder radius="lg" p="xs" style={{ background: "rgba(255,255,255,0.02)" }}>
+                      {activeMovieClip ? (
+                        <Stack gap="xs">
+                          <Box
+                            style={{
+                              aspectRatio: "16 / 9",
+                              overflow: "hidden",
+                              borderRadius: 12,
+                              background: "rgba(255,255,255,0.04)",
                             }}
-                            onPromptCommit={(value) => void commitFramePrompt(frame, value)}
-                            onReferenceModeChange={(checked) => {
-                              patchFrameLocally(frame.id, { usePreviousFrameAsReference: checked });
-                              void mutate(
-                                `/api/frames/${frame.id}`,
-                                {
-                                  method: "PATCH",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({ usePreviousFrameAsReference: checked }),
-                                },
-                                "Frame updated",
-                              );
-                            }}
-                            onSelectGalleryAdd={() => setSelectedGalleryTile("frame", frame.id, GALLERY_ADD_TILE_ID)}
-                            onGenerateFromGallery={() => {
-                              selectFrame(frame.id);
-                              setSelectedGalleryTile("frame", frame.id, GALLERY_ADD_TILE_ID);
-                              void mutate(
-                                `/api/frames/${frame.id}/generate`,
-                                { method: "POST" },
-                                "Queued frame generation",
-                              );
-                            }}
-                            onApproveVersion={(versionId) => {
-                              void (async () => {
-                                const success = await approveVersion("frame", versionId);
-                                if (success) {
-                                  setSelectedGalleryTile("frame", frame.id, versionId);
-                                }
-                              })();
-                            }}
-                          />
-
-                          {transition && shouldShowTransition(transition) ? (
-                            <TransitionQueueCard
-                              transition={transition}
-                              selected={selectedTransitionId === transition.id}
-                              reorderMode={reorderMode}
-                              promptValue={
-                                selectedTransitionId === transition.id && activeEditor === "transitionPrompt"
-                                  ? transitionPromptDraft
-                                  : transition.transitionPrompt
-                              }
-                              selectedGalleryTileId={getSelectedGalleryTileId(transition)}
-                              onSelect={() => selectTransition(transition.id)}
-                              onDelete={() => void deleteTransition(transition.id)}
-                              onMovePair={() => {
-                                setSegmentMoveTarget(transition);
-                                setSegmentIndex(transition.fromFrame.position + 1);
-                              }}
-                              onZoom={setZoomTarget}
-                              onPromptChange={setTransitionPromptDraft}
-                              onPromptFocus={() => {
-                                setTransitionPromptDraft(transition.transitionPrompt);
-                                setActiveEditor("transitionPrompt");
-                              }}
-                              onPromptCommit={(value) => void commitTransitionPrompt(transition, value)}
-                              onSelectGalleryAdd={() =>
-                                setSelectedGalleryTile("transition", transition.id, GALLERY_ADD_TILE_ID)
-                              }
-                              onGenerateFromGallery={() => {
-                                selectTransition(transition.id);
-                                setSelectedGalleryTile("transition", transition.id, GALLERY_ADD_TILE_ID);
-                                void mutate(
-                                  "/api/transitions/bulk-generate",
-                                  {
-                                    method: "POST",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ transitionIds: [transition.id] }),
-                                  },
-                                  "Queued transition generation",
-                                );
-                              }}
-                              onApproveVersion={(versionId) => {
-                                void (async () => {
-                                  const success = await approveVersion("transition", versionId);
-                                  if (success) {
-                                    setSelectedGalleryTile("transition", transition.id, versionId);
+                          >
+                            <video
+                              key={activeMovieClip.clipId}
+                              ref={movieVideoRef}
+                              controls
+                              playsInline
+                              preload="auto"
+                              poster={activeMovieClip.posterSrc}
+                              src={activeMovieClip.src}
+                              style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
+                              onLoadedData={() => {
+                                if (movieIsPlaying) {
+                                  const video = movieVideoRef.current;
+                                  if (video) {
+                                    void video.play().catch(() => {
+                                      setMoviePlaying(false);
+                                    });
                                   }
-                                })();
+                                }
+                              }}
+                              onPlay={() => setMoviePlaying(true)}
+                              onPause={() => {
+                                const video = movieVideoRef.current;
+                                if (video && !video.ended) {
+                                  setMoviePlaying(false);
+                                }
+                              }}
+                              onEnded={() => {
+                                if (movieIndex < moviePlaylist.length - 1) {
+                                  setMovieCursor(movieIndex + 1);
+                                  return;
+                                }
+
+                                setMoviePlaying(false);
                               }}
                             />
-                          ) : null}
+                          </Box>
+                          <Group justify="space-between" align="flex-start">
+                            <Stack gap={2}>
+                              <Text fw={600}>{activeMovieClip.label}</Text>
+                              <Text c="dimmed" size="sm">
+                                Clip {movieIndex + 1} of {moviePlaylist.length} · {activeMovieClip.model}
+                              </Text>
+                            </Stack>
+                          </Group>
                         </Stack>
-                      );
-                    })}
-                  </Stack>
-                </SortableContext>
-              </DndContext>
+                      ) : (
+                        <Flex mih={300} align="center" justify="center">
+                          <Text c="dimmed" size="sm">
+                            No current transition clips are ready yet.
+                          </Text>
+                        </Flex>
+                      )}
+                    </Card>
 
-              {isPending ? <Text c="dimmed">Applying reorder…</Text> : null}
+                    {moviePlaylist.length > 0 ? (
+                      <ScrollArea offsetScrollbars="x" scrollbarSize={8} type="scroll">
+                        <Group gap="sm" wrap="nowrap">
+                          {moviePlaylist.map((clip, index) => {
+                            const isSelected = index === movieIndex;
+
+                            return (
+                              <UnstyledButton
+                                key={clip.clipId}
+                                onClick={() => selectMovieClip(index)}
+                                style={{
+                                  display: "block",
+                                  minWidth: 220,
+                                  borderRadius: 16,
+                                  border: isSelected ? "1px solid rgba(94, 230, 176, 0.72)" : "1px solid rgba(255,255,255,0.08)",
+                                  background: isSelected ? "rgba(28, 84, 67, 0.3)" : "rgba(255,255,255,0.02)",
+                                  overflow: "hidden",
+                                }}
+                              >
+                                <Stack gap="xs" p="xs">
+                                  <Box
+                                    style={{
+                                      aspectRatio: "16 / 9",
+                                      overflow: "hidden",
+                                      borderRadius: 12,
+                                      background: "rgba(255,255,255,0.04)",
+                                    }}
+                                  >
+                                    <video
+                                      muted
+                                      playsInline
+                                      preload="metadata"
+                                      poster={clip.posterSrc}
+                                      src={clip.src}
+                                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                                    />
+                                  </Box>
+                                  <Text fw={600} size="sm" lineClamp={2}>
+                                    {clip.label}
+                                  </Text>
+                                  <Text c="dimmed" size="xs">
+                                    {clip.model}
+                                  </Text>
+                                </Stack>
+                              </UnstyledButton>
+                            );
+                          })}
+                        </Group>
+                      </ScrollArea>
+                    ) : null}
+                  </Stack>
+                </Card>
+              ) : (
+                <>
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={(event) => {
+                      if (!reorderMode) {
+                        return;
+                      }
+
+                      const { active, over } = event;
+                      if (!over || active.id === over.id) {
+                        return;
+                      }
+
+                      const oldIndex = frames.findIndex((frame) => frame.id === active.id);
+                      const newIndex = frames.findIndex((frame) => frame.id === over.id);
+                      const reordered = arrayMove(frames, oldIndex, newIndex).map((frame) => frame.id);
+
+                      startTransition(() => {
+                        void mutate(
+                          "/api/frames/reorder",
+                          {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ orderedFrameIds: reordered }),
+                          },
+                          "Frames reordered",
+                        );
+                      });
+                    }}
+                  >
+                    <SortableContext items={frames.map((frame) => frame.id)} strategy={verticalListSortingStrategy}>
+                      <Stack gap="sm">
+                        {(reorderMode ? frames : visibleFrames).map((frame) => {
+                          const transition = transitionMap.get(frame.id) ?? null;
+                          return (
+                            <Stack key={frame.id} gap="sm">
+                              <FrameQueueCard
+                                frame={frame}
+                                selected={selectedFrameId === frame.id}
+                                reorderMode={reorderMode}
+                                promptValue={
+                                  selectedFrameId === frame.id && activeEditor === "framePrompt"
+                                    ? framePromptDraft
+                                    : frame.imagePrompt
+                                }
+                                selectedGalleryTileId={getSelectedGalleryTileId(frame)}
+                                onSelect={() => selectFrame(frame.id)}
+                                onDelete={() => void deleteFrame(frame.id)}
+                                onZoom={setZoomTarget}
+                                onPromptChange={setFramePromptDraft}
+                                onPromptFocus={() => {
+                                  setFramePromptDraft(frame.imagePrompt);
+                                  setActiveEditor("framePrompt");
+                                }}
+                                onPromptCommit={(value) => void commitFramePrompt(frame, value)}
+                                onReferenceModeChange={(checked) => {
+                                  patchFrameLocally(frame.id, { usePreviousFrameAsReference: checked });
+                                  void mutate(
+                                    `/api/frames/${frame.id}`,
+                                    {
+                                      method: "PATCH",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ usePreviousFrameAsReference: checked }),
+                                    },
+                                    "Frame updated",
+                                  );
+                                }}
+                                onSelectGalleryAdd={() => setSelectedGalleryTile("frame", frame.id, GALLERY_ADD_TILE_ID)}
+                                onGenerateFromGallery={() => {
+                                  selectFrame(frame.id);
+                                  setSelectedGalleryTile("frame", frame.id, GALLERY_ADD_TILE_ID);
+                                  void mutate(
+                                    `/api/frames/${frame.id}/generate`,
+                                    { method: "POST" },
+                                    "Queued frame generation",
+                                  );
+                                }}
+                                onApproveVersion={(versionId) => {
+                                  void (async () => {
+                                    const success = await approveVersion("frame", versionId);
+                                    if (success) {
+                                      setSelectedGalleryTile("frame", frame.id, versionId);
+                                    }
+                                  })();
+                                }}
+                              />
+
+                              {transition && shouldShowTransition(transition) ? (
+                                <TransitionQueueCard
+                                  transition={transition}
+                                  selected={selectedTransitionId === transition.id}
+                                  reorderMode={reorderMode}
+                                  promptValue={
+                                    selectedTransitionId === transition.id && activeEditor === "transitionPrompt"
+                                      ? transitionPromptDraft
+                                      : transition.transitionPrompt
+                                  }
+                                  selectedGalleryTileId={getSelectedGalleryTileId(transition)}
+                                  onSelect={() => selectTransition(transition.id)}
+                                  onDelete={() => void deleteTransition(transition.id)}
+                                  onMovePair={() => {
+                                    setSegmentMoveTarget(transition);
+                                    setSegmentIndex(transition.fromFrame.position + 1);
+                                  }}
+                                  onZoom={setZoomTarget}
+                                  onPromptChange={setTransitionPromptDraft}
+                                  onPromptFocus={() => {
+                                    setTransitionPromptDraft(transition.transitionPrompt);
+                                    setActiveEditor("transitionPrompt");
+                                  }}
+                                  onPromptCommit={(value) => void commitTransitionPrompt(transition, value)}
+                                  onGenerateFromGallery={() => {
+                                    selectTransition(transition.id);
+                                    setSelectedGalleryTile("transition", transition.id, GALLERY_ADD_TILE_ID);
+                                    void mutate(
+                                      "/api/transitions/bulk-generate",
+                                      {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ transitionIds: [transition.id] }),
+                                      },
+                                      "Queued transition generation",
+                                    );
+                                  }}
+                                  onApproveVersion={(versionId) => {
+                                    void (async () => {
+                                      const success = await approveVersion("transition", versionId);
+                                      if (success) {
+                                        setSelectedGalleryTile("transition", transition.id, versionId);
+                                      }
+                                    })();
+                                  }}
+                                />
+                              ) : null}
+                            </Stack>
+                          );
+                        })}
+                      </Stack>
+                    </SortableContext>
+                  </DndContext>
+
+                  {isPending ? <Text c="dimmed">Applying reorder…</Text> : null}
+                </>
+              )}
             </Stack>
           )}
         </ScrollArea>

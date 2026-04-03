@@ -89,7 +89,7 @@ export type GenerationJob = {
 
 export type PersistedUiState = {
   themeMode: "dark";
-  viewMode: "sequence";
+  viewMode: "sequence" | "play";
   selectedFrameId: string | null;
   selectedTransitionId: string | null;
   filter: "all" | "needsRepair";

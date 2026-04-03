@@ -93,7 +93,13 @@ export const projectManifestSchema = z.object({
   jobs: z.array(generationJobSchema),
   ui: z.object({
     themeMode: z.literal("dark"),
-    viewMode: z.enum(["sequence", "table"]).catch("sequence").transform(() => "sequence" as const),
+    viewMode: z.enum(["sequence", "play", "table"]).catch("sequence").transform((value) => {
+      if (value === "play") {
+        return "play" as const;
+      }
+
+      return "sequence" as const;
+    }),
     selectedFrameId: z.string().nullable(),
     selectedTransitionId: z.string().nullable(),
     filter: z.enum(["all", "needsRepair", "needsAttention", "approved"]).catch("needsRepair").transform((value) => {

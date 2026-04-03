@@ -5,6 +5,7 @@ import { mutateCurrentProject } from "@/lib/project-store";
 const requestSchema = z.object({
   selectedFrameId: z.string().nullable().optional(),
   selectedTransitionId: z.string().nullable().optional(),
+  viewMode: z.enum(["sequence", "play"]).optional(),
   filter: z.enum(["all", "needsRepair"]).optional(),
 });
 

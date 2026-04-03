@@ -41,4 +41,27 @@ describe("project schema", () => {
 
     expect(parsed.ui.filter).toBe("needsRepair");
   });
+
+  test("preserves play mode and maps legacy table mode back to sequence", () => {
+    const manifest = createEmptyManifest("legacy-project");
+
+    const playParsed = projectManifestSchema.parse({
+      ...manifest,
+      ui: {
+        ...manifest.ui,
+        viewMode: "play",
+      },
+    });
+
+    const legacyParsed = projectManifestSchema.parse({
+      ...manifest,
+      ui: {
+        ...manifest.ui,
+        viewMode: "table",
+      },
+    });
+
+    expect(playParsed.ui.viewMode).toBe("play");
+    expect(legacyParsed.ui.viewMode).toBe("sequence");
+  });
 });
