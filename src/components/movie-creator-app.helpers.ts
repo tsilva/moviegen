@@ -98,6 +98,51 @@ export function getTransitionDisplayPrompt(transition: TransitionView, selectedG
   return prompt?.trim() || "No transition prompt yet";
 }
 
+export function getTransitionGenerationDraft(transition: TransitionView, selectedGalleryTileId?: string) {
+  const selectedVersion = selectedGalleryTileId
+    ? findTransitionVersionByTileId(transition, selectedGalleryTileId)
+    : null;
+  const prompt = selectedVersion?.sourcePrompt ?? getFallbackTransitionPrompt(transition) ?? "";
+
+  return {
+    prompt,
+  };
+}
+
+export function shouldAutoSelectGeneratedTile(input: {
+  selectedTileId: string | undefined;
+  addTileId: string;
+  defaultTileId: string;
+  previousDefaultTileId: string | undefined;
+  wasPending: boolean | undefined;
+  isPending: boolean;
+}) {
+  const {
+    selectedTileId,
+    addTileId,
+    defaultTileId,
+    previousDefaultTileId,
+    wasPending,
+    isPending,
+  } = input;
+
+  if (
+    !wasPending ||
+    isPending ||
+    defaultTileId === addTileId ||
+    previousDefaultTileId == null ||
+    previousDefaultTileId === defaultTileId
+  ) {
+    return false;
+  }
+
+  if (selectedTileId === addTileId) {
+    return true;
+  }
+
+  return selectedTileId != null && selectedTileId === previousDefaultTileId;
+}
+
 export function getFrameRepairAction(frame: FrameView) {
   if (frame.nextAction === "write_prompt") {
     return "open_modal";
@@ -220,18 +265,6 @@ export function getTransitionCardMeta(transition: TransitionView, selectedGaller
   const prompt = getTransitionDisplayPrompt(transition, selectedGalleryTileId);
   const promptPlaceholder = !prompt.trim() || prompt === "No transition prompt yet";
 
-  if (!transition.transitionPrompt.trim()) {
-    return {
-      title: getTransitionLabel(transition),
-      prompt,
-      promptPlaceholder,
-      statusLabel: "Add Prompt",
-      statusColor: "orange",
-      summary: "Add a transition prompt so this cut knows how the two frames should connect.",
-      action: { intent: "write_prompt", label: "Add Prompt", color: "orange" },
-    };
-  }
-
   if (transition.blockedByFrameIds.length > 0) {
     return {
       title: getTransitionLabel(transition),
@@ -249,9 +282,11 @@ export function getTransitionCardMeta(transition: TransitionView, selectedGaller
       title: getTransitionLabel(transition),
       prompt,
       promptPlaceholder,
-      statusLabel: "Generate",
+      statusLabel: promptPlaceholder ? "Add Asset" : "Generate",
       statusColor: "cyan",
-      summary: "The current frame pair is ready. Generate a fresh clip for the latest cut.",
+      summary: promptPlaceholder
+        ? "Generate a clip for the latest frame pair. Add an optional prompt in the modal if you want to direct the move."
+        : "The current frame pair is ready. Generate a fresh clip for the latest cut.",
       action: { intent: "generate", label: "Generate Clip", color: "cyan" },
     };
   }
@@ -315,9 +350,7 @@ export function getSequenceOverviewStats(
   transitions: TransitionView[],
   currentClipCount: number,
 ): SequenceOverviewStats {
-  const missingInputCount =
-    frames.filter((frame) => frame.nextAction === "write_prompt").length +
-    transitions.filter((transition) => !transition.transitionPrompt.trim()).length;
+  const missingInputCount = frames.filter((frame) => frame.nextAction === "write_prompt").length;
 
   const actionableGenerationCount =
     frames.filter((frame) => frame.nextAction === "generate").length +
@@ -385,17 +418,6 @@ export function getSequenceNextStep(
         description: "Add a prompt before this frame can generate and unblock the rest of the cut.",
         ctaLabel: "Add Prompt",
         queueRank: frame.queueRank,
-      })),
-    ...transitions
-      .filter((transition) => !transition.transitionPrompt.trim())
-      .map((transition) => ({
-        kind: "transition" as const,
-        entryId: transition.id,
-        action: "write_prompt" as const,
-        title: `${getTransitionLabel(transition)} needs direction`,
-        description: "Add a transition prompt so this move can generate when you are ready.",
-        ctaLabel: "Add Prompt",
-        queueRank: transition.queueRank,
       })),
   ]);
 

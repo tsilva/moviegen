@@ -9,6 +9,8 @@ import {
   getSequenceOverviewStats,
   getTransitionCardMeta,
   getTransitionDisplayPrompt,
+  getTransitionGenerationDraft,
+  shouldAutoSelectGeneratedTile,
 } from "./movie-creator-app.helpers";
 
 function createVersion(id: string, overrides: Partial<FrameVersion> = {}): FrameVersion {
@@ -229,14 +231,21 @@ describe("movie creator transition helpers", () => {
       transitionPrompt: "   ",
       fromFrame: createFrameView({ position: 0 }),
       toFrame: createFrameView({ id: "frame_2", position: 1 }),
+      approvedVideoVersion: null,
+      latestVideoVersion: null,
+      currentVideo: null,
+      galleryVersions: [],
+      versions: [],
+      approvedVideoVersionId: null,
+      videoStatus: "not_ready",
     });
 
     expect(getTransitionCardMeta(transition, "__add__")).toMatchObject({
       title: "Transition 1 -> 2",
       prompt: "No transition prompt yet",
-      statusLabel: "Add Prompt",
+      statusLabel: "Add Asset",
       action: {
-        label: "Add Prompt",
+        label: "Generate Clip",
       },
     });
   });
@@ -255,6 +264,47 @@ describe("movie creator transition helpers", () => {
       prompt: "Selected clip prompt",
       promptPlaceholder: false,
     });
+  });
+
+  test("uses the selected clip prompt to prefill transition generation", () => {
+    const selectedVersion = createTransitionVersion("transitionver_selected", {
+      sourcePrompt: "Selected clip prompt",
+    });
+    const transition = createTransitionView({
+      galleryVersions: [selectedVersion],
+      latestVideoVersion: selectedVersion,
+      currentVideo: selectedVersion,
+    });
+
+    expect(getTransitionGenerationDraft(transition, selectedVersion.id)).toEqual({
+      prompt: "Selected clip prompt",
+    });
+  });
+
+  test("auto-selects the new clip after generation when the current clip had been selected", () => {
+    expect(
+      shouldAutoSelectGeneratedTile({
+        selectedTileId: "transitionver_current",
+        addTileId: "__add__",
+        defaultTileId: "transitionver_generated",
+        previousDefaultTileId: "transitionver_current",
+        wasPending: true,
+        isPending: false,
+      }),
+    ).toBe(true);
+  });
+
+  test("does not override a manually selected alternate clip after generation completes", () => {
+    expect(
+      shouldAutoSelectGeneratedTile({
+        selectedTileId: "transitionver_alternate",
+        addTileId: "__add__",
+        defaultTileId: "transitionver_generated",
+        previousDefaultTileId: "transitionver_current",
+        wasPending: true,
+        isPending: false,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -291,13 +341,13 @@ describe("sequence overview helpers", () => {
     expect(getSequenceOverviewStats(frames, transitions, 1)).toEqual({
       currentClipCount: 1,
       totalTransitionCount: 3,
-      missingInputCount: 2,
+      missingInputCount: 1,
       actionableGenerationCount: 2,
       inProgressCount: 2,
     });
   });
 
-  test("prioritizes missing prompts before ready generation and pending work", () => {
+  test("prioritizes frame prompt gaps before ready generation and pending work", () => {
     const frames = [
       createFrameView({ id: "frame_1", nextAction: "generate", status: "stale_dependency", queueRank: 0 }),
       createFrameView({ id: "frame_2", nextAction: "write_prompt", status: "draft", queueRank: 2 }),
@@ -318,8 +368,8 @@ describe("sequence overview helpers", () => {
     ];
 
     expect(getSequenceNextStep(frames, transitions, 0)).toMatchObject({
-      kind: "transition",
-      entryId: "transition_1",
+      kind: "frame",
+      entryId: "frame_2",
       action: "write_prompt",
       ctaLabel: "Add Prompt",
     });

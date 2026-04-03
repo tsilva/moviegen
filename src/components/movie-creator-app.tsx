@@ -37,6 +37,7 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   IconArrowsShuffle,
   IconFolderOpen,
+  IconInfoCircle,
   IconPlayerPause,
   IconPlayerPlay,
   IconPlus,
@@ -63,6 +64,7 @@ import {
   getTransitionCardMeta,
   getTransitionGenerationDraft,
   getTransitionLabel,
+  shouldAutoSelectGeneratedTile,
 } from "@/components/movie-creator-app.helpers";
 
 type ApiResult = ProjectSnapshot & {
@@ -73,6 +75,12 @@ type ZoomTarget = {
   src: string;
   alt: string;
   title: string;
+};
+
+type AssetInfoTarget = {
+  title: string;
+  requestPayload: unknown;
+  responsePayload: unknown;
 };
 
 type MoviePlaylistEntry = {
@@ -116,6 +124,14 @@ async function requestJson<T>(input: RequestInfo, init?: RequestInit): Promise<T
     throw new Error(data.error ?? "Request failed");
   }
   return data as T;
+}
+
+function formatPayload(value: unknown) {
+  if (value === undefined) {
+    return "Not available for this asset.";
+  }
+
+  return JSON.stringify(value, null, 2);
 }
 
 function getInitialSelection(snapshot: ProjectSnapshot | null) {
@@ -256,6 +272,7 @@ type AssetGalleryProps<TVersion extends FrameVersion | TransitionVersion> = {
   addTileDescription?: string;
   onSelectAdd: () => void;
   onSelectVersion: (versionId: string) => void;
+  onOpenInfo: (version: TVersion) => void;
 };
 
 function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
@@ -269,6 +286,7 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
   addTileDescription,
   onSelectAdd,
   onSelectVersion,
+  onOpenInfo,
 }: AssetGalleryProps<TVersion>) {
   return (
     <Stack gap="xs">
@@ -323,9 +341,18 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
           const isSelected = selectedTileId === version.id;
 
           return (
-            <UnstyledButton
+            <Box
               key={version.id}
+              role="button"
+              tabIndex={0}
+              aria-label={`Select ${kind === "frame" ? "asset" : "clip"} ${getVersionLabel?.(version) ?? version.model}`}
               onClick={() => onSelectVersion(version.id)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onSelectVersion(version.id);
+                }
+              }}
               style={{
                 display: "block",
                 width: ENTRY_PREVIEW_WIDTH,
@@ -334,6 +361,7 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
                 border: isSelected ? "1px solid rgba(94, 230, 176, 0.72)" : "1px solid rgba(255,255,255,0.08)",
                 background: isSelected ? "rgba(28, 84, 67, 0.3)" : "rgba(255,255,255,0.02)",
                 overflow: "hidden",
+                cursor: "pointer",
               }}
             >
               <Stack gap="xs" p="xs">
@@ -346,6 +374,26 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
                     position: "relative",
                   }}
                 >
+                  <ActionIcon
+                    variant="filled"
+                    color="dark"
+                    radius="xl"
+                    size="sm"
+                    aria-label={`Show generation request and response for ${getVersionLabel?.(version) ?? version.model}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpenInfo(version);
+                    }}
+                    style={{
+                      position: "absolute",
+                      top: 8,
+                      right: 8,
+                      zIndex: 2,
+                      background: "rgba(8, 12, 18, 0.78)",
+                    }}
+                  >
+                    <IconInfoCircle size={14} aria-hidden="true" />
+                  </ActionIcon>
                   {"thumbnailPath" in version ? (
                     <Image
                       src={assetUrl(version.thumbnailPath)}
@@ -372,7 +420,7 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
                   {getVersionLabel?.(version) ?? version.model}
                 </Text>
               </Stack>
-            </UnstyledButton>
+            </Box>
           );
         })}
       </Group>
@@ -390,6 +438,7 @@ type FrameQueueCardProps = {
   onZoom: (target: ZoomTarget) => void;
   onSelectGalleryAdd: () => void;
   onApproveVersion: (versionId: string) => void;
+  onOpenInfo: (version: FrameVersion) => void;
   onPrimaryAction: () => void;
   cardRef: (node: HTMLDivElement | null) => void;
 };
@@ -404,6 +453,7 @@ function FrameQueueCard({
   onZoom,
   onSelectGalleryAdd,
   onApproveVersion,
+  onOpenInfo,
   onPrimaryAction,
   cardRef,
 }: FrameQueueCardProps) {
@@ -540,6 +590,7 @@ function FrameQueueCard({
                 addTileDisabled={isPending}
                 onSelectAdd={onSelectGalleryAdd}
                 onSelectVersion={onApproveVersion}
+                onOpenInfo={onOpenInfo}
               />
             </Stack>
           </>
@@ -560,6 +611,7 @@ type TransitionQueueCardProps = {
   onMovePair: () => void;
   onGenerateFromGallery: () => void;
   onApproveVersion: (versionId: string) => void;
+  onOpenInfo: (version: TransitionVersion) => void;
   onPrimaryAction: () => void;
   cardRef: (node: HTMLDivElement | null) => void;
 };
@@ -575,6 +627,7 @@ function TransitionQueueCard({
   onMovePair,
   onGenerateFromGallery,
   onApproveVersion,
+  onOpenInfo,
   onPrimaryAction,
   cardRef,
 }: TransitionQueueCardProps) {
@@ -726,6 +779,7 @@ function TransitionQueueCard({
                 addTileDescription={generateDisabledReason ?? undefined}
                 onSelectAdd={onGenerateFromGallery}
                 onSelectVersion={onApproveVersion}
+                onOpenInfo={onOpenInfo}
               />
             </Stack>
           </>
@@ -767,6 +821,73 @@ function ZoomModal({ target, onClose }: ZoomModalProps) {
           style={{ objectFit: "contain", display: "block" }}
         />
       </Box>
+    </Modal>
+  );
+}
+
+type AssetInfoModalProps = {
+  target: AssetInfoTarget | null;
+  onClose: () => void;
+};
+
+function AssetInfoModal({ target, onClose }: AssetInfoModalProps) {
+  if (!target) {
+    return null;
+  }
+
+  return (
+    <Modal opened onClose={onClose} size="min(960px, 96vw)" centered title={target.title}>
+      <Stack gap="md">
+        <Stack gap={6}>
+          <Text fw={700} size="sm">
+            Raw Request
+          </Text>
+          <ScrollArea.Autosize mah="28dvh" offsetScrollbars>
+            <Box
+              component="pre"
+              m={0}
+              p="sm"
+              style={{
+                overflow: "auto",
+                borderRadius: 12,
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                fontSize: 12,
+                lineHeight: 1.5,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {formatPayload(target.requestPayload)}
+            </Box>
+          </ScrollArea.Autosize>
+        </Stack>
+
+        <Stack gap={6}>
+          <Text fw={700} size="sm">
+            Raw Response
+          </Text>
+          <ScrollArea.Autosize mah="28dvh" offsetScrollbars>
+            <Box
+              component="pre"
+              m={0}
+              p="sm"
+              style={{
+                overflow: "auto",
+                borderRadius: 12,
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                fontSize: 12,
+                lineHeight: 1.5,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {formatPayload(target.responsePayload)}
+            </Box>
+          </ScrollArea.Autosize>
+        </Stack>
+      </Stack>
     </Modal>
   );
 }
@@ -1047,6 +1168,7 @@ export function MovieCreatorApp({
   const [bulkInput, setBulkInput] = useState("");
   const [bulkFrameReferences, setBulkFrameReferences] = useState<BulkFrameReferenceDraft[]>([]);
   const [zoomTarget, setZoomTarget] = useState<ZoomTarget | null>(null);
+  const [assetInfoTarget, setAssetInfoTarget] = useState<AssetInfoTarget | null>(null);
   const [selectedFrameId, setSelectedFrameId] = useState<string | null>(initialSelection.selectedFrameId);
   const [selectedTransitionId, setSelectedTransitionId] = useState<string | null>(
     initialSelection.selectedTransitionId,
@@ -1067,6 +1189,7 @@ export function MovieCreatorApp({
   const [moviePlaying, setMoviePlaying] = useState(false);
   const [isPending, startTransition] = useTransition();
   const previousPendingByEntryRef = useRef<Record<string, boolean>>({});
+  const previousDefaultTileByEntryRef = useRef<Record<string, string>>({});
   const movieVideoRef = useRef<HTMLVideoElement | null>(null);
   const frameCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const transitionCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -1092,9 +1215,11 @@ export function MovieCreatorApp({
     setSelectedTransitionId(nextSelection.selectedTransitionId);
     setGallerySelection({});
     previousPendingByEntryRef.current = {};
+    previousDefaultTileByEntryRef.current = {};
     setMovieCursor(0);
     setMoviePlaying(false);
     movieVideoRef.current?.pause();
+    setAssetInfoTarget(null);
     resetBulkFrameDrafts();
     setFrameGenerationTargetId(null);
     setFrameGenerationPromptDraft("");
@@ -1131,6 +1256,14 @@ export function MovieCreatorApp({
       ...current,
       [galleryKey(kind, id)]: tileId,
     }));
+  }
+
+  function openAssetInfo(kind: "frame" | "transition", version: FrameVersion | TransitionVersion) {
+    setAssetInfoTarget({
+      title: `${kind === "frame" ? "Frame Asset" : "Transition Clip"} Info`,
+      requestPayload: version.inputPayload,
+      responsePayload: version.responsePayload,
+    });
   }
 
   async function loadProject(pathValue: string, options?: { notify?: boolean }) {
@@ -1222,10 +1355,12 @@ export function MovieCreatorApp({
   useEffect(() => {
     if (!snapshot) {
       previousPendingByEntryRef.current = {};
+      previousDefaultTileByEntryRef.current = {};
       return;
     }
 
     const nextPendingByEntry: Record<string, boolean> = {};
+    const nextDefaultTileByEntry: Record<string, string> = {};
     const nextEntryKeys = new Set<string>();
 
     setGallerySelection((current) => {
@@ -1241,6 +1376,7 @@ export function MovieCreatorApp({
 
         nextEntryKeys.add(key);
         nextPendingByEntry[key] = isPending;
+        nextDefaultTileByEntry[key] = defaultTileId;
 
         if (selectedTileId && !validTileIds.has(selectedTileId)) {
           nextSelection[key] = defaultTileId;
@@ -1248,12 +1384,14 @@ export function MovieCreatorApp({
           continue;
         }
 
-        if (
-          previousPendingByEntryRef.current[key] &&
-          !isPending &&
-          selectedTileId === GALLERY_ADD_TILE_ID &&
-          defaultTileId !== GALLERY_ADD_TILE_ID
-        ) {
+        if (shouldAutoSelectGeneratedTile({
+          selectedTileId,
+          addTileId: GALLERY_ADD_TILE_ID,
+          defaultTileId,
+          previousDefaultTileId: previousDefaultTileByEntryRef.current[key],
+          wasPending: previousPendingByEntryRef.current[key],
+          isPending,
+        })) {
           nextSelection[key] = defaultTileId;
           changed = true;
         }
@@ -1268,6 +1406,7 @@ export function MovieCreatorApp({
 
         nextEntryKeys.add(key);
         nextPendingByEntry[key] = isPending;
+        nextDefaultTileByEntry[key] = defaultTileId;
 
         if (selectedTileId && !validTileIds.has(selectedTileId)) {
           nextSelection[key] = defaultTileId;
@@ -1275,12 +1414,14 @@ export function MovieCreatorApp({
           continue;
         }
 
-        if (
-          previousPendingByEntryRef.current[key] &&
-          !isPending &&
-          selectedTileId === GALLERY_ADD_TILE_ID &&
-          defaultTileId !== GALLERY_ADD_TILE_ID
-        ) {
+        if (shouldAutoSelectGeneratedTile({
+          selectedTileId,
+          addTileId: GALLERY_ADD_TILE_ID,
+          defaultTileId,
+          previousDefaultTileId: previousDefaultTileByEntryRef.current[key],
+          wasPending: previousPendingByEntryRef.current[key],
+          isPending,
+        })) {
           nextSelection[key] = defaultTileId;
           changed = true;
         }
@@ -1297,6 +1438,7 @@ export function MovieCreatorApp({
     });
 
     previousPendingByEntryRef.current = nextPendingByEntry;
+    previousDefaultTileByEntryRef.current = nextDefaultTileByEntry;
   }, [snapshot]);
 
   const frames = snapshot?.frames ?? [];
@@ -1874,6 +2016,7 @@ export function MovieCreatorApp({
                                   onSelect={() => selectFrame(frame.id)}
                                   onDelete={() => void deleteFrame(frame.id)}
                                   onZoom={setZoomTarget}
+                                  onOpenInfo={(version) => openAssetInfo("frame", version)}
                                   onPrimaryAction={() => runFramePrimaryAction(frame)}
                                   cardRef={(node) => {
                                     frameCardRefs.current[frame.id] = node;
@@ -1905,6 +2048,7 @@ export function MovieCreatorApp({
                                       setSegmentMoveTarget(transition);
                                       setSegmentIndex(transition.fromFrame.position + 1);
                                     }}
+                                    onOpenInfo={(version) => openAssetInfo("transition", version)}
                                     onPrimaryAction={() => {
                                       void runTransitionPrimaryAction(transition);
                                     }}
@@ -1974,6 +2118,7 @@ export function MovieCreatorApp({
       </Box>
 
       <ZoomModal target={zoomTarget} onClose={() => setZoomTarget(null)} />
+      <AssetInfoModal target={assetInfoTarget} onClose={() => setAssetInfoTarget(null)} />
 
       <Modal opened={projectModalOpen} onClose={() => setProjectModalOpen(false)} title="Open Project">
         <Stack>
