@@ -5,11 +5,21 @@ import {
   getCurrentFrameVersionIdForManifest,
   getApprovedFrameVersion,
   getLatestFrameVersion,
+  isFrameVersionCurrentForState,
+  isTransitionVersionCurrentForState,
   nowIso,
 } from "@/lib/project-ops";
 import { mutateCurrentProject, mutateProject, readProjectSnapshot } from "@/lib/project-store";
 import { generateFrameImages, generateTransitionVideo } from "@/lib/provider";
-import type { Frame, GenerationJob, ProjectManifest, ProjectSnapshot, Transition } from "@/lib/types";
+import type {
+  Frame,
+  FrameVersion,
+  GenerationJob,
+  ProjectManifest,
+  ProjectSnapshot,
+  Transition,
+  TransitionVersion,
+} from "@/lib/types";
 
 type FrameGenerationOptions = {
   candidateCount: number;
@@ -269,6 +279,12 @@ async function completeFrameJob(
 
     const timestamp = nowIso();
     const versionId = createId("framever");
+    const sourcePrompt =
+      typeof job.requestPayload.prompt === "string" ? job.requestPayload.prompt : frame.imagePrompt;
+    const usePreviousFrameAsReference =
+      typeof job.requestPayload.usePreviousFrameAsReference === "boolean"
+        ? job.requestPayload.usePreviousFrameAsReference
+        : frame.usePreviousFrameAsReference;
 
     job.targetId = versionId;
     job.provider = "atlas";
@@ -280,7 +296,7 @@ async function completeFrameJob(
     job.completedAt = timestamp;
     job.updatedAt = timestamp;
 
-    frame.versions.push({
+    const version: FrameVersion = {
       id: versionId,
       model: model || IMAGE_MODEL,
       inputPayload,
@@ -288,13 +304,37 @@ async function completeFrameJob(
       thumbnailPath: relativePath,
       generationJobId: job.id,
       createdAt: timestamp,
-      reviewerDecision: "unreviewed",
+      reviewerDecision: "unreviewed" as const,
       reviewerNotes: "",
-      sourcePrompt: frame.imagePrompt,
-      usePreviousFrameAsReference: frame.usePreviousFrameAsReference,
+      sourcePrompt,
+      usePreviousFrameAsReference,
       dependencyFrameId,
       dependencyVersionId,
-    });
+    };
+
+    frame.versions.push(version);
+
+    const orderedFrames = [...manifest.frames].sort((left, right) => left.position - right.position);
+    const frameIndex = orderedFrames.findIndex((item) => item.id === frame.id);
+    const previousFrameId = frameIndex > 0 ? orderedFrames[frameIndex - 1]?.id ?? null : null;
+    const previousCurrentVersionId = previousFrameId
+      ? getCurrentFrameVersionIdForManifest(manifest, previousFrameId)
+      : null;
+    const shouldSelectGeneratedVersion = isFrameVersionCurrentForState(
+      frame,
+      version,
+      previousCurrentVersionId,
+    );
+
+    if (shouldSelectGeneratedVersion) {
+      frame.approvedVersionId = versionId;
+      version.reviewerDecision = "approved";
+      for (const sibling of frame.versions) {
+        if (sibling.id !== versionId && sibling.reviewerDecision === "approved") {
+          sibling.reviewerDecision = "rejected";
+        }
+      }
+    }
     frame.updatedAt = timestamp;
   });
 }
@@ -339,7 +379,7 @@ async function completeTransitionJob(
     job.completedAt = timestamp;
     job.updatedAt = timestamp;
 
-    transition.versions.push({
+    const version: TransitionVersion = {
       id: versionId,
       model: model || VIDEO_MODEL,
       inputPayload,
@@ -347,12 +387,39 @@ async function completeTransitionJob(
       posterPath,
       generationJobId: job.id,
       createdAt: timestamp,
-      reviewerDecision: "unreviewed",
+      reviewerDecision: "unreviewed" as const,
       reviewerNotes: "",
       promptRevision,
       fromApprovedVersionId,
       toApprovedVersionId,
-    });
+    };
+
+    transition.versions.push(version);
+
+    const currentFromEndpointVersionId = getCurrentFrameVersionIdForManifest(
+      manifest,
+      transition.fromFrameId,
+    );
+    const currentToEndpointVersionId = getCurrentFrameVersionIdForManifest(
+      manifest,
+      transition.toFrameId,
+    );
+    const shouldSelectGeneratedVersion = isTransitionVersionCurrentForState(
+      transition,
+      version,
+      currentFromEndpointVersionId,
+      currentToEndpointVersionId,
+    );
+
+    if (shouldSelectGeneratedVersion) {
+      transition.approvedVideoVersionId = versionId;
+      version.reviewerDecision = "approved";
+      for (const sibling of transition.versions) {
+        if (sibling.id !== versionId && sibling.reviewerDecision === "approved") {
+          sibling.reviewerDecision = "rejected";
+        }
+      }
+    }
     transition.updatedAt = timestamp;
   });
 }
@@ -600,10 +667,6 @@ export async function enqueueTransitionGeneration(
       const toFrame = frameMap.get(transition.toFrameId) ?? null;
       const fromEndpointVersionId = fromFrame ? getCurrentFrameVersionIdForManifest(manifest, fromFrame.id) : null;
       const toEndpointVersionId = toFrame ? getCurrentFrameVersionIdForManifest(manifest, toFrame.id) : null;
-
-      if (!transition.transitionPrompt.trim()) {
-        throw new Error("Transition prompt is required before generating video");
-      }
 
       if (!fromEndpointVersionId || !toEndpointVersionId) {
         throw new Error("Both endpoint frames need at least one generated version before generating a transition");

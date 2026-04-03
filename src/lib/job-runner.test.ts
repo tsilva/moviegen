@@ -117,6 +117,28 @@ async function waitForTransitionJobToSettle(projectPath: string) {
   throw new Error("Timed out waiting for transition job to settle");
 }
 
+async function waitForJobToStart(
+  projectPath: string,
+  kind: "frame_image" | "transition_video",
+) {
+  const deadline = Date.now() + 2_000;
+
+  while (Date.now() < deadline) {
+    const snapshot = await readProjectSnapshot(projectPath);
+    const activeJob = snapshot.manifest.jobs.find(
+      (job) => job.kind === kind && job.status === "running",
+    );
+
+    if (activeJob) {
+      return snapshot;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  throw new Error(`Timed out waiting for ${kind} job to start`);
+}
+
 describe("frame job anchoring", () => {
   const tempDirs: string[] = [];
 
@@ -205,6 +227,119 @@ describe("frame job anchoring", () => {
       }),
     );
     expect(snapshot.manifest.jobs[0]?.status).toBe("completed");
+  });
+
+  test("first generated frame auto-approves itself", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      draft.frames = [first];
+      return draft;
+    });
+
+    const queuedSnapshot = await enqueueFrameGeneration([manifest.frames[0]!.id], {
+      candidateCount: 1,
+      size: "1280x720",
+      seedMode: "random",
+    });
+
+    expect(queuedSnapshot.manifest.frames[0]?.approvedVersionId).toBeNull();
+
+    const snapshot = await waitForFrameJobToSettle(projectPath);
+    const generatedFrame = snapshot.manifest.frames[0]!;
+    const approvedVersion = generatedFrame.versions.find(
+      (version) => version.id === generatedFrame.approvedVersionId,
+    );
+
+    expect(generatedFrame.approvedVersionId).toBeTruthy();
+    expect(approvedVersion?.reviewerDecision).toBe("approved");
+  });
+
+  test("new generated frame replaces an existing current frame when it is still current", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const approvedVersion = createFrameVersion(path.join("frames", "first", "approved.png"), {
+        sourcePrompt: first.imagePrompt,
+      });
+      first.versions.push(approvedVersion);
+      first.approvedVersionId = approvedVersion.id;
+      draft.frames = [first];
+      return draft;
+    });
+
+    await enqueueFrameGeneration([manifest.frames[0]!.id], {
+      candidateCount: 1,
+      size: "1280x720",
+      seedMode: "random",
+    });
+
+    const snapshot = await waitForFrameJobToSettle(projectPath);
+    const generatedFrame = snapshot.manifest.frames[0]!;
+    const latestVersion = generatedFrame.versions.at(-1);
+
+    expect(generatedFrame.approvedVersionId).toBe(latestVersion?.id);
+    expect(latestVersion?.reviewerDecision).toBe("approved");
+  });
+
+  test("does not replace the current frame when the prompt changes while generation is in flight", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    let resolveGeneration: ((value: Awaited<ReturnType<typeof generateFrameImagesMock>>) => void) | null = null;
+    generateFrameImagesMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveGeneration = resolve;
+        }),
+    );
+
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const approvedVersion = createFrameVersion(path.join("frames", "first", "approved.png"), {
+        sourcePrompt: first.imagePrompt,
+      });
+      first.versions.push(approvedVersion);
+      first.approvedVersionId = approvedVersion.id;
+      draft.frames = [first];
+      return draft;
+    });
+
+    await enqueueFrameGeneration([manifest.frames[0]!.id], {
+      candidateCount: 1,
+      size: "1280x720",
+      seedMode: "random",
+    });
+
+    await waitForJobToStart(projectPath, "frame_image");
+
+    const pendingSnapshot = await readProjectSnapshot(projectPath);
+    pendingSnapshot.manifest.frames[0]!.imagePrompt = "First prompt revised";
+    await saveManifest(projectPath, pendingSnapshot.manifest);
+
+    resolveGeneration?.([
+      {
+        model: "mock-edit-model",
+        providerPredictionId: "pred_prompt_change",
+        relativePath: path.join("frames", "generated", "revised-late.png"),
+        inputPayload: { model: "mock-edit-model" },
+      },
+    ]);
+
+    const snapshot = await waitForFrameJobToSettle(projectPath);
+    const generatedFrame = snapshot.manifest.frames[0]!;
+    const latestVersion = generatedFrame.versions.at(-1);
+
+    expect(generatedFrame.approvedVersionId).toBe(manifest.frames[0]!.approvedVersionId);
+    expect(latestVersion?.reviewerDecision).toBe("unreviewed");
+    expect(latestVersion?.sourcePrompt).toBe("First prompt");
   });
 
   test("uses the previous approved frame as the anchor reference", async () => {
@@ -412,13 +547,202 @@ describe("frame job anchoring", () => {
       toApprovedVersionId: manifest.frames[1]!.approvedVersionId,
     });
 
-    await waitForTransitionJobToSettle(projectPath);
+    const settledSnapshot = await waitForTransitionJobToSettle(projectPath);
+    const generatedTransition = settledSnapshot.manifest.transitions[0]!;
+    const approvedVideo = generatedTransition.versions.find(
+      (version) => version.id === generatedTransition.approvedVideoVersionId,
+    );
 
     expect(generateTransitionVideoMock).toHaveBeenCalledWith(
       expect.objectContaining({
         fromImagePath: fromOutputPath,
         toImagePath: toOutputPath,
         prompt: "Match cut",
+      }),
+    );
+    expect(generatedTransition.approvedVideoVersionId).toBeTruthy();
+    expect(approvedVideo?.reviewerDecision).toBe("approved");
+  });
+
+  test("new generated transition replaces an existing current clip when it is still current", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    const fromOutputPath = path.join("frames", "first", "approved.png");
+    const toOutputPath = path.join("frames", "second", "approved.png");
+
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const second = createFrame("Second", 1);
+      const firstVersion = createFrameVersion(fromOutputPath);
+      const secondVersion = createFrameVersion(toOutputPath);
+      first.versions.push(firstVersion);
+      second.versions.push(secondVersion);
+      first.approvedVersionId = firstVersion.id;
+      second.approvedVersionId = secondVersion.id;
+      draft.frames = [first, second];
+      reconcileTransitions(draft);
+
+      const transition = draft.transitions[0]!;
+      transition.transitionPrompt = "Match cut";
+      transition.promptRevision = 1;
+      transition.confirmedFromVersionId = firstVersion.id;
+      transition.confirmedToVersionId = secondVersion.id;
+      transition.versions.push({
+        id: createId("transitionver"),
+        model: "mock-video-model",
+        inputPayload: {},
+        outputPath: "transitions/current.mp4",
+        posterPath: "transitions/current.png",
+        generationJobId: createId("job"),
+        createdAt: nowIso(),
+        reviewerDecision: "approved",
+        reviewerNotes: "",
+        promptRevision: 1,
+        fromApprovedVersionId: firstVersion.id,
+        toApprovedVersionId: secondVersion.id,
+      });
+      transition.approvedVideoVersionId = transition.versions[0]!.id;
+
+      return draft;
+    });
+
+    await enqueueTransitionGeneration([manifest.transitions[0]!.id], {
+      duration: 4,
+      size: "1280x720",
+      fps: 24,
+    });
+
+    const snapshot = await waitForTransitionJobToSettle(projectPath);
+    const generatedTransition = snapshot.manifest.transitions[0]!;
+    const latestVersion = generatedTransition.versions.at(-1);
+
+    expect(generatedTransition.approvedVideoVersionId).toBe(latestVersion?.id);
+    expect(latestVersion?.reviewerDecision).toBe("approved");
+  });
+
+  test("does not replace the current transition when the prompt revision changes while generation is in flight", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    let resolveGeneration: ((value: Awaited<ReturnType<typeof generateTransitionVideoMock>>) => void) | null = null;
+    generateTransitionVideoMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveGeneration = resolve;
+        }),
+    );
+
+    const fromOutputPath = path.join("frames", "first", "approved.png");
+    const toOutputPath = path.join("frames", "second", "approved.png");
+
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const second = createFrame("Second", 1);
+      const firstVersion = createFrameVersion(fromOutputPath);
+      const secondVersion = createFrameVersion(toOutputPath);
+      first.versions.push(firstVersion);
+      second.versions.push(secondVersion);
+      first.approvedVersionId = firstVersion.id;
+      second.approvedVersionId = secondVersion.id;
+      draft.frames = [first, second];
+      reconcileTransitions(draft);
+
+      const transition = draft.transitions[0]!;
+      transition.transitionPrompt = "Match cut";
+      transition.promptRevision = 1;
+      transition.confirmedFromVersionId = firstVersion.id;
+      transition.confirmedToVersionId = secondVersion.id;
+      transition.versions.push({
+        id: createId("transitionver"),
+        model: "mock-video-model",
+        inputPayload: {},
+        outputPath: "transitions/current.mp4",
+        posterPath: "transitions/current.png",
+        generationJobId: createId("job"),
+        createdAt: nowIso(),
+        reviewerDecision: "approved",
+        reviewerNotes: "",
+        promptRevision: 1,
+        fromApprovedVersionId: firstVersion.id,
+        toApprovedVersionId: secondVersion.id,
+      });
+      transition.approvedVideoVersionId = transition.versions[0]!.id;
+
+      return draft;
+    });
+
+    await enqueueTransitionGeneration([manifest.transitions[0]!.id], {
+      duration: 4,
+      size: "1280x720",
+      fps: 24,
+    });
+
+    await waitForJobToStart(projectPath, "transition_video");
+
+    const pendingSnapshot = await readProjectSnapshot(projectPath);
+    pendingSnapshot.manifest.transitions[0]!.transitionPrompt = "Match cut revised";
+    pendingSnapshot.manifest.transitions[0]!.promptRevision = 2;
+    await saveManifest(projectPath, pendingSnapshot.manifest);
+
+    resolveGeneration?.({
+      model: "mock-video-model",
+      providerPredictionId: "pred_transition_prompt_change",
+      relativePath: path.join("transitions", "generated", "late-clip.mp4"),
+      posterRelativePath: path.join("transitions", "generated", "late-poster.png"),
+      inputPayload: { model: "mock-video-model" },
+    });
+
+    const snapshot = await waitForTransitionJobToSettle(projectPath);
+    const generatedTransition = snapshot.manifest.transitions[0]!;
+    const latestVersion = generatedTransition.versions.at(-1);
+
+    expect(generatedTransition.approvedVideoVersionId).toBe(manifest.transitions[0]!.approvedVideoVersionId);
+    expect(latestVersion?.reviewerDecision).toBe("unreviewed");
+    expect(latestVersion?.promptRevision).toBe(1);
+  });
+
+  test("transition generation allows an empty prompt", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    const fromOutputPath = path.join("frames", "first", "approved.png");
+    const toOutputPath = path.join("frames", "second", "approved.png");
+
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const second = createFrame("Second", 1);
+      const firstVersion = createFrameVersion(fromOutputPath);
+      const secondVersion = createFrameVersion(toOutputPath);
+      first.versions.push(firstVersion);
+      second.versions.push(secondVersion);
+      first.approvedVersionId = firstVersion.id;
+      second.approvedVersionId = secondVersion.id;
+      draft.frames = [first, second];
+      reconcileTransitions(draft);
+      return draft;
+    });
+
+    const queuedSnapshot = await enqueueTransitionGeneration([manifest.transitions[0]!.id], {
+      duration: 4,
+      size: "1280x720",
+      fps: 24,
+    });
+
+    expect(queuedSnapshot.manifest.jobs.at(-1)?.requestPayload).toMatchObject({
+      prompt: "",
+    });
+
+    await waitForTransitionJobToSettle(projectPath);
+
+    expect(generateTransitionVideoMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: "",
+        fromImagePath: fromOutputPath,
+        toImagePath: toOutputPath,
       }),
     );
   });

@@ -114,6 +114,28 @@ function frameVersionMatchesCurrentState(
   return version.dependencyVersionId == null || version.dependencyVersionId === previousCurrentVersionId;
 }
 
+export function isFrameVersionCurrentForState(
+  frame: Frame,
+  version: FrameVersion | null,
+  previousCurrentVersionId: string | null,
+) {
+  if (!version) {
+    return false;
+  }
+
+  return frameVersionMatchesCurrentState(frame, version, previousCurrentVersionId);
+}
+
+export function getFrameGalleryVersions(
+  frame: Frame,
+  previousCurrentVersionId: string | null,
+) {
+  return frame.versions
+    .filter((version) => frameVersionMatchesCurrentState(frame, version, previousCurrentVersionId))
+    .slice()
+    .reverse();
+}
+
 function getCurrentFrameVersion(
   frame: Frame,
   previousCurrentVersionId: string | null,
@@ -139,12 +161,12 @@ function isFrameBlockedByUpstream(frame: Frame, previousFrame: FrameView | null)
 export function deriveFrameStatus(input: {
   frame: Frame;
   currentVersion: FrameVersion | null;
-  approvedVersion: FrameVersion | null;
   latestVersion: FrameVersion | null;
   jobs: GenerationJob[];
   blockedByFrameId: string | null;
+  hasCurrentApproval: boolean;
 }): FrameStatus {
-  const { frame, currentVersion, approvedVersion, latestVersion, jobs, blockedByFrameId } = input;
+  const { frame, currentVersion, latestVersion, jobs, blockedByFrameId, hasCurrentApproval } = input;
 
   if (jobs.some((job) => job.status === "running")) {
     return "generating";
@@ -163,7 +185,7 @@ export function deriveFrameStatus(input: {
       return "error";
     }
 
-    if (latestVersion || approvedVersion || frame.versions.length > 0) {
+    if (latestVersion || frame.versions.length > 0) {
       return "stale_dependency";
     }
 
@@ -174,7 +196,7 @@ export function deriveFrameStatus(input: {
     return "error";
   }
 
-  if (approvedVersion && approvedVersion.id === currentVersion.id) {
+  if (hasCurrentApproval) {
     return "approved";
   }
 
@@ -184,10 +206,6 @@ export function deriveFrameStatus(input: {
 export function deriveFrameNextAction(status: FrameStatus): FrameNextAction {
   if (status === "draft" || status === "stale_dependency" || status === "error") {
     return "generate";
-  }
-
-  if (status === "generated_unreviewed") {
-    return "review";
   }
 
   return null;
@@ -213,16 +231,24 @@ function buildFrameViews(manifest: ProjectManifest) {
     const previousFrame = frames.at(-1) ?? null;
     const approvedVersion = getApprovedFrameVersion(frame);
     const latestVersion = getLatestFrameVersion(frame);
-    const currentVersion = getCurrentFrameVersion(frame, previousFrame?.currentVersion?.id ?? null);
+    const previousCurrentVersionId = previousFrame?.currentVersion?.id ?? null;
+    const latestMatchingVersion = getCurrentFrameVersion(frame, previousCurrentVersionId);
+    const galleryVersions = getFrameGalleryVersions(frame, previousCurrentVersionId);
+    const hasCurrentApproval = isFrameVersionCurrentForState(
+      frame,
+      approvedVersion,
+      previousCurrentVersionId,
+    );
+    const currentVersion = hasCurrentApproval ? approvedVersion : latestMatchingVersion;
     const blockedByFrameId = isFrameBlockedByUpstream(frame, previousFrame) ? previousFrame?.id ?? null : null;
     const jobs = getFrameJobs(frame.id, manifest.jobs);
     const status = deriveFrameStatus({
       frame,
       currentVersion,
-      approvedVersion,
       latestVersion,
       jobs,
       blockedByFrameId,
+      hasCurrentApproval,
     });
 
     frames.push({
@@ -231,6 +257,8 @@ function buildFrameViews(manifest: ProjectManifest) {
       approvedVersion,
       latestVersion,
       currentVersion,
+      galleryVersions,
+      hasCurrentApproval,
       queuedJobs: jobs.filter((job) => job.status !== "completed").length,
       nextAction: deriveFrameNextAction(status),
       dependsOnPreviousFrame: frame.usePreviousFrameAsReference && frame.position > 0,
@@ -281,10 +309,6 @@ export function deriveTransitionPromptStatus(
     return "blocked";
   }
 
-  if (!transition.transitionPrompt.trim()) {
-    return "missing";
-  }
-
   if (
     transition.confirmedFromVersionId !== fromEndpointVersionId ||
     transition.confirmedToVersionId !== toEndpointVersionId
@@ -315,13 +339,49 @@ function getCurrentTransitionVideo(
   return null;
 }
 
+export function isTransitionVersionCurrentForState(
+  transition: Transition,
+  version: Transition["versions"][number] | null,
+  fromEndpointVersionId: string | null,
+  toEndpointVersionId: string | null,
+) {
+  if (!version) {
+    return false;
+  }
+
+  return (
+    version.promptRevision === transition.promptRevision &&
+    version.fromApprovedVersionId === fromEndpointVersionId &&
+    version.toApprovedVersionId === toEndpointVersionId
+  );
+}
+
+export function getTransitionGalleryVersions(
+  transition: Transition,
+  fromEndpointVersionId: string | null,
+  toEndpointVersionId: string | null,
+) {
+  return transition.versions
+    .filter((version) =>
+      isTransitionVersionCurrentForState(
+        transition,
+        version,
+        fromEndpointVersionId,
+        toEndpointVersionId,
+      ),
+    )
+    .slice()
+    .reverse();
+}
+
 export function deriveTransitionVideoStatus(input: {
   transition: Transition;
   jobs: GenerationJob[];
   blockedByFrameIds: string[];
   currentVideo: Transition["versions"][number] | null;
+  hasCurrentApproval: boolean;
 }): TransitionVideoStatus {
-  const { transition, jobs, blockedByFrameIds, currentVideo } = input;
+  const { transition, jobs, blockedByFrameIds, currentVideo, hasCurrentApproval } = input;
 
   if (jobs.some((job) => job.status === "running")) {
     return "generating";
@@ -335,10 +395,6 @@ export function deriveTransitionVideoStatus(input: {
     return "error";
   }
 
-  if (!transition.transitionPrompt.trim()) {
-    return "not_ready";
-  }
-
   if (blockedByFrameIds.length > 0) {
     return transition.versions.length > 0 ? "stale" : "not_ready";
   }
@@ -347,8 +403,7 @@ export function deriveTransitionVideoStatus(input: {
     return transition.versions.length > 0 || transition.invalidationReason ? "stale" : "not_ready";
   }
 
-  const approvedVideo = getApprovedTransitionVideo(transition);
-  if (approvedVideo && approvedVideo.id === currentVideo.id) {
+  if (hasCurrentApproval) {
     return "approved";
   }
 
@@ -361,18 +416,10 @@ export function deriveTransitionNextAction(input: {
   videoStatus: TransitionVideoStatus;
   blockedByFrameIds: string[];
 }): TransitionNextAction {
-  const { transition, promptStatus, videoStatus, blockedByFrameIds } = input;
-
-  if (!transition.transitionPrompt.trim()) {
-    return "write_prompt";
-  }
+  const { promptStatus, videoStatus, blockedByFrameIds } = input;
 
   if (blockedByFrameIds.length > 0 || promptStatus === "blocked") {
     return null;
-  }
-
-  if (videoStatus === "generated_unreviewed") {
-    return "review";
   }
 
   if (videoStatus === "error" || videoStatus === "stale" || videoStatus === "not_ready") {
@@ -449,16 +496,31 @@ export function buildProjectSnapshot(
         .filter((frame) => frame.currentVersion == null || frame.status === "blocked_upstream")
         .map((frame) => frame.id);
       const promptStatus = deriveTransitionPromptStatus(transition, frameViewMap, blockedByFrameIds);
-      const currentVideo = getCurrentTransitionVideo(
+      const approvedVideoVersion = getApprovedTransitionVideo(transition);
+      const latestVideoVersion = getLatestTransitionVersion(transition);
+      const latestMatchingVideo = getCurrentTransitionVideo(
         transition,
         fromFrame.currentVersion?.id ?? null,
         toFrame.currentVersion?.id ?? null,
       );
+      const galleryVersions = getTransitionGalleryVersions(
+        transition,
+        fromFrame.currentVersion?.id ?? null,
+        toFrame.currentVersion?.id ?? null,
+      );
+      const hasCurrentApproval = isTransitionVersionCurrentForState(
+        transition,
+        approvedVideoVersion,
+        fromFrame.currentVersion?.id ?? null,
+        toFrame.currentVersion?.id ?? null,
+      );
+      const currentVideo = hasCurrentApproval ? approvedVideoVersion : latestMatchingVideo;
       const videoStatus = deriveTransitionVideoStatus({
         transition,
         jobs: manifest.jobs.filter((job) => job.targetParentId === transition.id),
         blockedByFrameIds,
         currentVideo,
+        hasCurrentApproval,
       });
 
       const view: TransitionView = {
@@ -467,8 +529,11 @@ export function buildProjectSnapshot(
         videoStatus,
         fromFrame,
         toFrame,
-        approvedVideoVersion: getApprovedTransitionVideo(transition),
-        latestVideoVersion: getLatestTransitionVersion(transition),
+        approvedVideoVersion,
+        latestVideoVersion,
+        currentVideo,
+        galleryVersions,
+        hasCurrentApproval,
         isStale: currentVideo == null || blockedByFrameIds.length > 0 || promptStatus !== "confirmed",
         nextAction: deriveTransitionNextAction({
           transition,

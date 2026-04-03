@@ -24,6 +24,7 @@ import {
   TextInput,
   Textarea,
   Title,
+  UnstyledButton,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
@@ -75,6 +76,7 @@ const DEFAULT_PROJECT_PATH = process.env.NEXT_PUBLIC_DEFAULT_PROJECT_PATH?.trim(
 const PROJECT_PATH_PLACEHOLDER =
   process.env.NEXT_PUBLIC_DEFAULT_PROJECT_PATH ?? "/Users/tsilva/Desktop/moviegen";
 const WORKSPACE_HEIGHT = "calc(100dvh - 32px)";
+const GALLERY_ADD_TILE_ID = "__add__";
 
 function assetUrl(relativePath: string | null | undefined) {
   if (!relativePath) {
@@ -103,7 +105,7 @@ function frameStatusLabel(frame: FrameView) {
     case "generating":
       return "Generating";
     case "generated_unreviewed":
-      return "Needs Review";
+      return frame.hasCurrentApproval ? "Stable" : "Candidate";
     case "approved":
       return "Stable";
     case "error":
@@ -118,7 +120,7 @@ function frameStatusColor(frame: FrameView) {
     case "approved":
       return "teal";
     case "generated_unreviewed":
-      return "yellow";
+      return frame.hasCurrentApproval ? "teal" : "cyan";
     case "queued":
     case "generating":
       return "blue";
@@ -133,21 +135,6 @@ function frameStatusColor(frame: FrameView) {
   }
 }
 
-function framePrimaryActionLabel(frame: FrameView) {
-  if (frame.status === "blocked_upstream") {
-    return "Waiting on upstream";
-  }
-
-  switch (frame.nextAction) {
-    case "generate":
-      return "Generate";
-    case "review":
-      return "Review";
-    default:
-      return "Up to date";
-  }
-}
-
 function frameSummary(frame: FrameView) {
   if (frame.status === "blocked_upstream") {
     return "An upstream frame changed or is still regenerating. This frame will unlock once the previous current output exists.";
@@ -158,7 +145,9 @@ function frameSummary(frame: FrameView) {
   }
 
   if (frame.status === "generated_unreviewed") {
-    return "A current candidate exists for the latest dependency chain. Review it before relying on it downstream.";
+    return frame.hasCurrentApproval
+      ? "A newer alternate candidate exists. Open details if you want to switch the current frame."
+      : "A current candidate exists. Open details if you want to make it the selected frame.";
   }
 
   if (frame.status === "approved") {
@@ -177,10 +166,6 @@ function frameSummary(frame: FrameView) {
 }
 
 function transitionStatusLabel(transition: TransitionView) {
-  if (!transition.transitionPrompt.trim()) {
-    return "Prompt Missing";
-  }
-
   if (transition.blockedByFrameIds.length > 0) {
     return "Blocked";
   }
@@ -191,7 +176,7 @@ function transitionStatusLabel(transition: TransitionView) {
     case "generating":
       return "Generating";
     case "generated_unreviewed":
-      return "Needs Review";
+      return transition.hasCurrentApproval ? "Stable" : "Candidate";
     case "approved":
       return "Stable";
     case "stale":
@@ -204,10 +189,6 @@ function transitionStatusLabel(transition: TransitionView) {
 }
 
 function transitionStatusColor(transition: TransitionView) {
-  if (!transition.transitionPrompt.trim()) {
-    return "yellow";
-  }
-
   if (transition.blockedByFrameIds.length > 0) {
     return "gray";
   }
@@ -216,7 +197,7 @@ function transitionStatusColor(transition: TransitionView) {
     case "approved":
       return "teal";
     case "generated_unreviewed":
-      return "yellow";
+      return transition.hasCurrentApproval ? "teal" : "cyan";
     case "queued":
     case "generating":
       return "blue";
@@ -229,38 +210,21 @@ function transitionStatusColor(transition: TransitionView) {
   }
 }
 
-function transitionPrimaryActionLabel(transition: TransitionView) {
-  if (transition.blockedByFrameIds.length > 0) {
-    return "Waiting on frames";
-  }
-
-  switch (transition.nextAction) {
-    case "write_prompt":
-      return "Write Prompt";
-    case "generate":
-      return "Generate";
-    case "review":
-      return "Review";
-    default:
-      return "Up to date";
-  }
-}
-
 function transitionSummary(transition: TransitionView) {
-  if (!transition.transitionPrompt.trim()) {
-    return "Add a prompt after the adjacent frames are current.";
-  }
-
   if (transition.blockedByFrameIds.length > 0) {
     return "One or both adjacent frames are not current yet. This clip stays blocked until the frame chain is repaired.";
   }
 
   if (transition.videoStatus === "stale" || transition.videoStatus === "not_ready") {
-    return "The current frame pair changed or no matching clip exists. Generate a fresh transition for the latest pair.";
+    return transition.transitionPrompt.trim()
+      ? "The current frame pair changed or no matching clip exists. Generate a fresh transition for the latest pair."
+      : "No matching clip exists for the latest frame pair yet. Generate now, or add an optional prompt in details first.";
   }
 
   if (transition.videoStatus === "generated_unreviewed") {
-    return "A current clip exists for the latest frame pair. Review it before considering the transition stable.";
+    return transition.hasCurrentApproval
+      ? "A newer alternate clip exists. Open details if you want to switch the current transition."
+      : "A current clip exists. Open details if you want to make it the selected transition.";
   }
 
   if (transition.videoStatus === "approved") {
@@ -276,6 +240,14 @@ function transitionSummary(transition: TransitionView) {
   }
 
   return "This transition is ready to generate.";
+}
+
+function frameDescriptor(frame: FrameView) {
+  return frame.imagePrompt || "Untitled frame";
+}
+
+function transitionDescriptor(transition: TransitionView) {
+  return transition.transitionPrompt || "Untitled transition";
 }
 
 async function requestJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
@@ -414,87 +386,126 @@ function ZoomableThumb({ src, zoomSrc, alt, emptyLabel, width, onZoom }: Zoomabl
   );
 }
 
-type CandidateStripProps<TVersion extends FrameVersion | TransitionVersion> = {
+type AssetGalleryProps<TVersion extends FrameVersion | TransitionVersion> = {
   title: string;
   versions: TVersion[];
-  approvedVersionId: string | null;
+  selectedTileId: string;
+  pending: boolean;
   kind: "frame" | "transition";
-  onApprove: (versionId: string) => void;
+  onSelectAdd: () => void;
+  onSelectVersion: (versionId: string) => void;
 };
 
-function CandidateStrip<TVersion extends FrameVersion | TransitionVersion>({
+function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
   title,
   versions,
-  approvedVersionId,
+  selectedTileId,
+  pending,
   kind,
-  onApprove,
-}: CandidateStripProps<TVersion>) {
-  if (!versions.length) {
-    return null;
-  }
-
+  onSelectAdd,
+  onSelectVersion,
+}: AssetGalleryProps<TVersion>) {
   return (
     <Stack gap="xs">
-      <Text fw={600} size="sm">
-        {title}
-      </Text>
-      <SimpleGrid cols={{ base: 1, md: 2 }} spacing="sm">
-        {versions
-          .slice()
-          .reverse()
-          .map((version) => {
-            const isApproved = approvedVersionId === version.id;
+      <Group justify="space-between" align="center">
+        <Text fw={600} size="sm">
+          {title}
+        </Text>
+        <Text c="dimmed" size="xs">
+          {versions.length} compatible {kind === "frame" ? "asset" : "clip"}
+          {versions.length === 1 ? "" : "s"}
+        </Text>
+      </Group>
+      <SimpleGrid cols={{ base: 2, md: 4 }} spacing="sm">
+        <UnstyledButton
+          onClick={onSelectAdd}
+          style={{
+            display: "block",
+            borderRadius: 16,
+            border:
+              selectedTileId === GALLERY_ADD_TILE_ID
+                ? "1px solid rgba(78, 201, 240, 0.72)"
+                : "1px solid rgba(255,255,255,0.08)",
+            background: selectedTileId === GALLERY_ADD_TILE_ID ? "rgba(30, 70, 92, 0.36)" : "rgba(255,255,255,0.02)",
+            overflow: "hidden",
+          }}
+        >
+          <Flex
+            direction="column"
+            align="center"
+            justify="center"
+            gap="xs"
+            style={{ aspectRatio: "16 / 9", padding: 16 }}
+          >
+            {pending ? <Loader size="sm" color="cyan" /> : <IconPlus size={24} aria-hidden="true" />}
+            <Text fw={600} size="sm">
+              {pending ? "Generating" : "Add Asset"}
+            </Text>
+            <Text c="dimmed" size="xs" ta="center">
+              {pending ? "Waiting for output" : kind === "frame" ? "Generate a new frame" : "Generate a new clip"}
+            </Text>
+          </Flex>
+        </UnstyledButton>
 
-            return (
-              <Card key={version.id} withBorder radius="lg" p="sm">
-                <Stack gap="sm">
-                  <Box
-                    style={{
-                      aspectRatio: "16 / 9",
-                      overflow: "hidden",
-                      borderRadius: 12,
-                      background: "rgba(255,255,255,0.04)",
-                    }}
-                  >
-                    {"thumbnailPath" in version ? (
-                      <Box style={{ position: "relative", width: "100%", height: "100%" }}>
-                        <Image
-                          src={assetUrl(version.thumbnailPath)}
-                          alt={`Candidate ${version.id}`}
-                          fill
-                          unoptimized
-                          sizes="(max-width: 1024px) 100vw, 420px"
-                          style={{ objectFit: "cover", display: "block" }}
-                        />
-                      </Box>
-                    ) : (
-                      <video
-                        controls
-                        playsInline
-                        preload="metadata"
-                        poster={assetUrl(version.posterPath) || undefined}
-                        src={assetUrl(version.outputPath)}
-                        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                      />
-                    )}
-                  </Box>
-                  <Group justify="space-between">
-                    <Text c="dimmed" size="xs">
-                      {version.model}
-                    </Text>
-                    <Badge color={isApproved ? "teal" : "gray"}>{isApproved ? "Approved" : "Candidate"}</Badge>
-                  </Group>
-                  <Button
-                    onClick={() => onApprove(version.id)}
-                    variant={isApproved ? "light" : "filled"}
-                    disabled={isApproved}
-                  >
-                    {isApproved ? "Current Approval" : `Approve ${kind}`}
-                  </Button>
-                </Stack>
-              </Card>
-            );
-          })}
+        {versions.map((version) => {
+          const isSelected = selectedTileId === version.id;
+
+          return (
+            <UnstyledButton
+              key={version.id}
+              onClick={() => onSelectVersion(version.id)}
+              style={{
+                display: "block",
+                borderRadius: 16,
+                border: isSelected ? "1px solid rgba(94, 230, 176, 0.72)" : "1px solid rgba(255,255,255,0.08)",
+                background: isSelected ? "rgba(28, 84, 67, 0.3)" : "rgba(255,255,255,0.02)",
+                overflow: "hidden",
+              }}
+            >
+              <Stack gap="xs" p="xs">
+                <Box
+                  style={{
+                    aspectRatio: "16 / 9",
+                    overflow: "hidden",
+                    borderRadius: 12,
+                    background: "rgba(255,255,255,0.04)",
+                    position: "relative",
+                  }}
+                >
+                  {"thumbnailPath" in version ? (
+                    <Image
+                      src={assetUrl(version.thumbnailPath)}
+                      alt={`Generated ${kind}`}
+                      fill
+                      unoptimized
+                      sizes="220px"
+                      style={{ objectFit: "cover", display: "block" }}
+                    />
+                  ) : (
+                    <video
+                      muted
+                      loop
+                      autoPlay
+                      playsInline
+                      preload="metadata"
+                      poster={assetUrl(version.posterPath) || undefined}
+                      src={assetUrl(version.outputPath)}
+                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                    />
+                  )}
+                </Box>
+                <Group justify="space-between" gap="xs">
+                  <Text c="dimmed" size="xs" truncate>
+                    {version.model}
+                  </Text>
+                  <Badge color={isSelected ? "teal" : "gray"} variant={isSelected ? "filled" : "light"}>
+                    {isSelected ? "Current" : "Available"}
+                  </Badge>
+                </Group>
+              </Stack>
+            </UnstyledButton>
+          );
+        })}
       </SimpleGrid>
     </Stack>
   );
@@ -506,8 +517,8 @@ type FrameQueueCardProps = {
   reorderMode: boolean;
   promptValue: string;
   detailsExpanded: boolean;
+  selectedGalleryTileId: string;
   onSelect: () => void;
-  onPrimaryAction: () => void;
   onDelete: () => void;
   onZoom: (target: ZoomTarget) => void;
   onPromptChange: (value: string) => void;
@@ -515,6 +526,8 @@ type FrameQueueCardProps = {
   onPromptCommit: (value: string) => void;
   onToggleDetails: () => void;
   onReferenceModeChange: (checked: boolean) => void;
+  onSelectGalleryAdd: () => void;
+  onGenerateFromGallery: () => void;
   onApproveVersion: (versionId: string) => void;
 };
 
@@ -524,8 +537,8 @@ function FrameQueueCard({
   reorderMode,
   promptValue,
   detailsExpanded,
+  selectedGalleryTileId,
   onSelect,
-  onPrimaryAction,
   onDelete,
   onZoom,
   onPromptChange,
@@ -533,14 +546,17 @@ function FrameQueueCard({
   onPromptCommit,
   onToggleDetails,
   onReferenceModeChange,
+  onSelectGalleryAdd,
+  onGenerateFromGallery,
   onApproveVersion,
 }: FrameQueueCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: frame.id,
   });
   const previewVersion = frame.currentVersion ?? frame.approvedVersion ?? frame.latestVersion;
-  const primaryActionLabel = framePrimaryActionLabel(frame);
-  const showAction = frame.nextAction != null;
+  const isPending = frame.status === "queued" || frame.status === "generating";
+  const addTileSelected = selectedGalleryTileId === GALLERY_ADD_TILE_ID;
+  const canGenerate = !isPending && frame.status !== "blocked_upstream";
 
   return (
     <Card
@@ -641,21 +657,10 @@ function FrameQueueCard({
 
             <Group justify="space-between" align="flex-start" wrap="nowrap">
               <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
-                <Text fw={600}>{frameLabel(frame)}</Text>
-                <Text c="dimmed" lineClamp={2} size="sm">
-                  {frame.imagePrompt || "No prompt yet."}
+                <Text fw={600} lineClamp={2}>
+                  {frameDescriptor(frame)}
                 </Text>
               </Stack>
-              <Button
-                variant={frame.nextAction === "review" ? "filled" : "light"}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onPrimaryAction();
-                }}
-                disabled={!showAction}
-              >
-                {primaryActionLabel}
-              </Button>
             </Group>
 
             <Text c="dimmed" size="sm">
@@ -668,19 +673,6 @@ function FrameQueueCard({
           <>
             <Divider color="rgba(255,255,255,0.08)" />
             <Stack gap="md" onClick={(event) => event.stopPropagation()}>
-              <Textarea
-                label="Image Prompt"
-                minRows={4}
-                value={promptValue}
-                onChange={(event) => onPromptChange(event.currentTarget.value)}
-                onFocus={onPromptFocus}
-                onBlur={(event) => onPromptCommit(event.currentTarget.value)}
-                placeholder="Describe the frame…"
-                name={`frame-prompt-${frame.id}`}
-                autosize
-                maxRows={10}
-                autoComplete="off"
-              />
               <Button
                 variant="subtle"
                 justify="space-between"
@@ -700,6 +692,18 @@ function FrameQueueCard({
               </Button>
               {detailsExpanded ? (
                 <Stack gap="md">
+                  <Textarea
+                    minRows={4}
+                    value={promptValue}
+                    onChange={(event) => onPromptChange(event.currentTarget.value)}
+                    onFocus={onPromptFocus}
+                    onBlur={(event) => onPromptCommit(event.currentTarget.value)}
+                    placeholder="Describe the frame…"
+                    name={`frame-prompt-${frame.id}`}
+                    autosize
+                    maxRows={10}
+                    autoComplete="off"
+                  />
                   <Switch
                     checked={frame.usePreviousFrameAsReference}
                     onChange={(event) => onReferenceModeChange(event.currentTarget.checked)}
@@ -710,13 +714,49 @@ function FrameQueueCard({
                       ? "This frame inherits continuity from the previous current frame output."
                       : "This frame stands on its own and does not repair automatically from upstream changes."}
                   </Text>
-                  <CandidateStrip
-                    title={frame.nextAction === "review" ? "Review Current Candidates" : "Candidate History"}
-                    versions={frame.versions}
-                    approvedVersionId={frame.approvedVersionId}
+                  <AssetGallery
+                    title="Asset Gallery"
+                    versions={frame.galleryVersions}
+                    selectedTileId={selectedGalleryTileId}
+                    pending={isPending}
                     kind="frame"
-                    onApprove={onApproveVersion}
+                    onSelectAdd={onSelectGalleryAdd}
+                    onSelectVersion={onApproveVersion}
                   />
+                  {addTileSelected ? (
+                    <Card withBorder radius="lg" p="sm" style={{ background: "rgba(255,255,255,0.02)" }}>
+                      <Stack gap="xs">
+                        <Group justify="space-between" align="center">
+                          <Text fw={600} size="sm">
+                            {isPending ? "Generation In Progress" : "Generate New Frame"}
+                          </Text>
+                          {frame.disabledReason ? (
+                            <Badge color="gray" variant="light">
+                              Unavailable
+                            </Badge>
+                          ) : null}
+                        </Group>
+                        <Text c="dimmed" size="sm">
+                          {isPending
+                            ? "This slot will be replaced by the finished frame, then a fresh add tile will return to the gallery."
+                            : "Generate a fresh frame candidate for the current prompt and dependency state."}
+                        </Text>
+                        {!canGenerate && frame.disabledReason ? (
+                          <Text c="dimmed" size="sm">
+                            {frame.disabledReason}
+                          </Text>
+                        ) : null}
+                        <Button
+                          leftSection={<IconSparkles size={16} aria-hidden="true" />}
+                          onClick={onGenerateFromGallery}
+                          disabled={!canGenerate}
+                          loading={isPending}
+                        >
+                          Generate Frame
+                        </Button>
+                      </Stack>
+                    </Card>
+                  ) : null}
                 </Stack>
               ) : null}
             </Stack>
@@ -733,8 +773,8 @@ type TransitionQueueCardProps = {
   reorderMode: boolean;
   promptValue: string;
   detailsExpanded: boolean;
+  selectedGalleryTileId: string;
   onSelect: () => void;
-  onPrimaryAction: () => void;
   onDelete: () => void;
   onMovePair: () => void;
   onZoom: (target: ZoomTarget) => void;
@@ -742,6 +782,8 @@ type TransitionQueueCardProps = {
   onPromptFocus: () => void;
   onPromptCommit: (value: string) => void;
   onToggleDetails: () => void;
+  onSelectGalleryAdd: () => void;
+  onGenerateFromGallery: () => void;
   onApproveVersion: (versionId: string) => void;
 };
 
@@ -751,8 +793,8 @@ function TransitionQueueCard({
   reorderMode,
   promptValue,
   detailsExpanded,
+  selectedGalleryTileId,
   onSelect,
-  onPrimaryAction,
   onDelete,
   onMovePair,
   onZoom,
@@ -760,13 +802,24 @@ function TransitionQueueCard({
   onPromptFocus,
   onPromptCommit,
   onToggleDetails,
+  onSelectGalleryAdd,
+  onGenerateFromGallery,
   onApproveVersion,
 }: TransitionQueueCardProps) {
-  const previewVideo = transition.approvedVideoVersion ?? transition.latestVideoVersion;
-  const primaryActionLabel = transitionPrimaryActionLabel(transition);
-  const showAction = transition.nextAction != null;
+  const previewVideo = transition.currentVideo ?? transition.approvedVideoVersion ?? transition.latestVideoVersion;
   const fromPreview = transition.fromFrame.currentVersion ?? transition.fromFrame.latestVersion;
   const toPreview = transition.toFrame.currentVersion ?? transition.toFrame.latestVersion;
+  const isPending = transition.videoStatus === "queued" || transition.videoStatus === "generating";
+  const addTileSelected = selectedGalleryTileId === GALLERY_ADD_TILE_ID;
+  const canGenerate =
+    !isPending &&
+    transition.blockedByFrameIds.length === 0 &&
+    transition.transitionPrompt.trim().length > 0;
+  const generateDisabledReason = transition.blockedByFrameIds.length
+    ? transition.disabledReason ?? "Waiting on adjacent frames."
+    : transition.transitionPrompt.trim()
+      ? null
+      : "Add a transition prompt before generating a clip.";
 
   return (
     <Card
@@ -870,21 +923,10 @@ function TransitionQueueCard({
 
             <Group justify="space-between" align="flex-start" wrap="nowrap">
               <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
-                <Text fw={600}>{transitionLabel(transition)}</Text>
-                <Text c="dimmed" lineClamp={2} size="sm">
-                  {transition.transitionPrompt || "No prompt yet."}
+                <Text fw={600} lineClamp={2}>
+                  {transitionDescriptor(transition)}
                 </Text>
               </Stack>
-              <Button
-                variant={transition.nextAction === "review" ? "filled" : "light"}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onPrimaryAction();
-                }}
-                disabled={!showAction}
-              >
-                {primaryActionLabel}
-              </Button>
             </Group>
 
             <Text c="dimmed" size="sm">
@@ -897,19 +939,6 @@ function TransitionQueueCard({
           <>
             <Divider color="rgba(255,255,255,0.08)" />
             <Stack gap="md" onClick={(event) => event.stopPropagation()}>
-              <Textarea
-                label="Transition Prompt"
-                minRows={4}
-                value={promptValue}
-                onChange={(event) => onPromptChange(event.currentTarget.value)}
-                onFocus={onPromptFocus}
-                onBlur={(event) => onPromptCommit(event.currentTarget.value)}
-                placeholder="Describe the motion between these frames…"
-                name={`transition-prompt-${transition.id}`}
-                autosize
-                maxRows={10}
-                autoComplete="off"
-              />
               <Button
                 variant="subtle"
                 justify="space-between"
@@ -929,16 +958,61 @@ function TransitionQueueCard({
               </Button>
               {detailsExpanded ? (
                 <Stack gap="md">
-                  <Text c="dimmed" size="sm">
-                    Transition generation always uses the latest current output from both adjacent frames.
-                  </Text>
-                  <CandidateStrip
-                    title={transition.nextAction === "review" ? "Review Current Clips" : "Clip History"}
-                    versions={transition.versions}
-                    approvedVersionId={transition.approvedVideoVersionId}
-                    kind="transition"
-                    onApprove={onApproveVersion}
+                  <Textarea
+                    minRows={4}
+                    value={promptValue}
+                    onChange={(event) => onPromptChange(event.currentTarget.value)}
+                    onFocus={onPromptFocus}
+                    onBlur={(event) => onPromptCommit(event.currentTarget.value)}
+                    placeholder="Describe the motion between these frames…"
+                    name={`transition-prompt-${transition.id}`}
+                    autosize
+                    maxRows={10}
+                    autoComplete="off"
                   />
+                  <AssetGallery
+                    title="Clip Gallery"
+                    versions={transition.galleryVersions}
+                    selectedTileId={selectedGalleryTileId}
+                    pending={isPending}
+                    kind="transition"
+                    onSelectAdd={onSelectGalleryAdd}
+                    onSelectVersion={onApproveVersion}
+                  />
+                  {addTileSelected ? (
+                    <Card withBorder radius="lg" p="sm" style={{ background: "rgba(255,255,255,0.02)" }}>
+                      <Stack gap="xs">
+                        <Group justify="space-between" align="center">
+                          <Text fw={600} size="sm">
+                            {isPending ? "Generation In Progress" : "Generate New Clip"}
+                          </Text>
+                          {generateDisabledReason ? (
+                            <Badge color="gray" variant="light">
+                              Unavailable
+                            </Badge>
+                          ) : null}
+                        </Group>
+                        <Text c="dimmed" size="sm">
+                          {isPending
+                            ? "This slot will be replaced by the finished clip, then a fresh add tile will return to the gallery."
+                            : "Generate a fresh clip for the current prompt revision and current frame pair."}
+                        </Text>
+                        {generateDisabledReason ? (
+                          <Text c="dimmed" size="sm">
+                            {generateDisabledReason}
+                          </Text>
+                        ) : null}
+                        <Button
+                          leftSection={<IconPlayerPlay size={16} aria-hidden="true" />}
+                          onClick={onGenerateFromGallery}
+                          disabled={!canGenerate}
+                          loading={isPending}
+                        >
+                          Generate Clip
+                        </Button>
+                      </Stack>
+                    </Card>
+                  ) : null}
                 </Stack>
               ) : null}
             </Stack>
@@ -1007,13 +1081,33 @@ export function MovieCreatorApp({
   const [activeEditor, setActiveEditor] = useState<null | "framePrompt" | "transitionPrompt">(null);
   const [framePromptDraft, setFramePromptDraft] = useState("");
   const [transitionPromptDraft, setTransitionPromptDraft] = useState("");
+  const [gallerySelection, setGallerySelection] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
-  const previousSelectedFrameRef = useRef<{
-    id: string | null;
-    status: FrameView["status"] | null;
-  }>({ id: null, status: null });
+  const previousPendingByEntryRef = useRef<Record<string, boolean>>({});
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
   const normalizedProjectPath = projectPath.trim();
+
+  function galleryKey(kind: "frame" | "transition", id: string) {
+    return `${kind}:${id}`;
+  }
+
+  function getDefaultGalleryTileId(entry: FrameView | TransitionView) {
+    return "currentVersion" in entry
+      ? entry.currentVersion?.id ?? GALLERY_ADD_TILE_ID
+      : entry.currentVideo?.id ?? GALLERY_ADD_TILE_ID;
+  }
+
+  function getSelectedGalleryTileId(entry: FrameView | TransitionView) {
+    return gallerySelection[galleryKey("currentVersion" in entry ? "frame" : "transition", entry.id)]
+      ?? getDefaultGalleryTileId(entry);
+  }
+
+  function setSelectedGalleryTile(kind: "frame" | "transition", id: string, tileId: string) {
+    setGallerySelection((current) => ({
+      ...current,
+      [galleryKey(kind, id)]: tileId,
+    }));
+  }
 
   async function loadProject(pathValue: string, options?: { notify?: boolean }) {
     const nextProjectPath = pathValue.trim();
@@ -1037,6 +1131,8 @@ export function MovieCreatorApp({
       setProjectPath(result.projectPath);
       setSelectedFrameId(nextSelection.selectedFrameId);
       setSelectedTransitionId(nextSelection.selectedTransitionId);
+      setGallerySelection({});
+      previousPendingByEntryRef.current = {};
       setFramePromptDraft(
         result.frames.find((frame) => frame.id === nextSelection.selectedFrameId)?.imagePrompt ?? "",
       );
@@ -1093,11 +1189,90 @@ export function MovieCreatorApp({
     };
   }, [activeEditor, snapshot?.manifest.jobs]);
 
+  useEffect(() => {
+    if (!snapshot) {
+      previousPendingByEntryRef.current = {};
+      return;
+    }
+
+    const nextPendingByEntry: Record<string, boolean> = {};
+    const nextEntryKeys = new Set<string>();
+
+    setGallerySelection((current) => {
+      let changed = false;
+      const nextSelection = { ...current };
+
+      for (const frame of snapshot.frames) {
+        const key = galleryKey("frame", frame.id);
+        const isPending = frame.status === "queued" || frame.status === "generating";
+        const validTileIds = new Set([GALLERY_ADD_TILE_ID, ...frame.galleryVersions.map((version) => version.id)]);
+        const defaultTileId = getDefaultGalleryTileId(frame);
+        const selectedTileId = nextSelection[key];
+
+        nextEntryKeys.add(key);
+        nextPendingByEntry[key] = isPending;
+
+        if (selectedTileId && !validTileIds.has(selectedTileId)) {
+          nextSelection[key] = defaultTileId;
+          changed = true;
+          continue;
+        }
+
+        if (
+          previousPendingByEntryRef.current[key] &&
+          !isPending &&
+          selectedTileId === GALLERY_ADD_TILE_ID &&
+          defaultTileId !== GALLERY_ADD_TILE_ID
+        ) {
+          nextSelection[key] = defaultTileId;
+          changed = true;
+        }
+      }
+
+      for (const transition of snapshot.transitions) {
+        const key = galleryKey("transition", transition.id);
+        const isPending = transition.videoStatus === "queued" || transition.videoStatus === "generating";
+        const validTileIds = new Set([GALLERY_ADD_TILE_ID, ...transition.galleryVersions.map((version) => version.id)]);
+        const defaultTileId = getDefaultGalleryTileId(transition);
+        const selectedTileId = nextSelection[key];
+
+        nextEntryKeys.add(key);
+        nextPendingByEntry[key] = isPending;
+
+        if (selectedTileId && !validTileIds.has(selectedTileId)) {
+          nextSelection[key] = defaultTileId;
+          changed = true;
+          continue;
+        }
+
+        if (
+          previousPendingByEntryRef.current[key] &&
+          !isPending &&
+          selectedTileId === GALLERY_ADD_TILE_ID &&
+          defaultTileId !== GALLERY_ADD_TILE_ID
+        ) {
+          nextSelection[key] = defaultTileId;
+          changed = true;
+        }
+      }
+
+      for (const key of Object.keys(nextSelection)) {
+        if (!nextEntryKeys.has(key)) {
+          delete nextSelection[key];
+          changed = true;
+        }
+      }
+
+      return changed ? nextSelection : current;
+    });
+
+    previousPendingByEntryRef.current = nextPendingByEntry;
+  }, [snapshot]);
+
   const frames = snapshot?.frames ?? [];
   const transitions = snapshot?.transitions ?? [];
   const filter = snapshot?.manifest.ui.filter ?? "needsRepair";
   const transitionMap = new Map(transitions.map((transition) => [transition.fromFrameId, transition]));
-  const selectedFrame = selectedFrameId ? frames.find((frame) => frame.id === selectedFrameId) ?? null : null;
 
   function shouldShowFrame(frame: FrameView) {
     if (reorderMode) {
@@ -1108,7 +1283,7 @@ export function MovieCreatorApp({
       return true;
     }
 
-    return frame.status !== "approved";
+    return frame.nextAction != null || frame.status === "blocked_upstream" || frame.status === "queued" || frame.status === "generating";
   }
 
   function shouldShowTransition(transition: TransitionView) {
@@ -1121,10 +1296,10 @@ export function MovieCreatorApp({
     }
 
     return (
-      transition.videoStatus !== "approved" ||
       transition.nextAction != null ||
       transition.blockedByFrameIds.length > 0 ||
-      transition.promptStatus !== "confirmed"
+      transition.videoStatus === "queued" ||
+      transition.videoStatus === "generating"
     );
   }
 
@@ -1136,8 +1311,6 @@ export function MovieCreatorApp({
 
   const repairCount = frames.filter((frame) => frame.status === "draft" || frame.status === "stale_dependency" || frame.status === "error").length +
     transitions.filter((transition) => transition.nextAction === "generate" || transition.nextAction === "write_prompt").length;
-  const reviewCount = frames.filter((frame) => frame.nextAction === "review").length +
-    transitions.filter((transition) => transition.nextAction === "review").length;
   const stableCount = frames.filter((frame) => frame.status === "approved").length +
     transitions.filter((transition) => transition.videoStatus === "approved").length;
 
@@ -1198,6 +1371,14 @@ export function MovieCreatorApp({
     setExpandedDetails((current) => ({
       ...current,
       [key]: !current[key],
+    }));
+  }
+
+  function expandDetails(kind: "frame" | "transition", id: string) {
+    const key = detailsKey(kind, id);
+    setExpandedDetails((current) => ({
+      ...current,
+      [key]: true,
     }));
   }
 
@@ -1274,7 +1455,7 @@ export function MovieCreatorApp({
         ? `/api/frame-versions/${versionId}/approve`
         : `/api/transition-versions/${versionId}/approve`;
 
-    await mutate(url, { method: "POST" }, "Approval saved");
+    return mutate(url, { method: "POST" }, "Current asset updated");
   }
 
   async function deleteFrame(frameId: string) {
@@ -1307,12 +1488,8 @@ export function MovieCreatorApp({
     selectFrame(frame.id);
 
     if (frame.nextAction === "generate") {
+      setSelectedGalleryTile("frame", frame.id, GALLERY_ADD_TILE_ID);
       await mutate(`/api/frames/${frame.id}/generate`, { method: "POST" }, "Queued frame generation");
-      return;
-    }
-
-    if (frame.nextAction === "review") {
-      notifications.show({ color: "cyan", message: "Review the current candidates inline below the frame." });
     }
   }
 
@@ -1320,11 +1497,12 @@ export function MovieCreatorApp({
     selectTransition(transition.id);
 
     if (transition.nextAction === "write_prompt") {
-      notifications.show({ color: "cyan", message: "Write the transition prompt inline below this row." });
+      expandDetails("transition", transition.id);
       return;
     }
 
     if (transition.nextAction === "generate") {
+      setSelectedGalleryTile("transition", transition.id, GALLERY_ADD_TILE_ID);
       await mutate(
         "/api/transitions/bulk-generate",
         {
@@ -1334,11 +1512,6 @@ export function MovieCreatorApp({
         },
         "Queued transition generation",
       );
-      return;
-    }
-
-    if (transition.nextAction === "review") {
-      notifications.show({ color: "cyan", message: "Review the current clips inline below the transition." });
     }
   }
 
@@ -1417,36 +1590,6 @@ export function MovieCreatorApp({
       setBulkModalOpen(false);
     }
   }
-
-  useEffect(() => {
-    const previous = previousSelectedFrameRef.current;
-    let reviewTimeout: number | null = null;
-
-    if (
-      selectedFrame &&
-      previous.id === selectedFrame.id &&
-      (previous.status === "queued" || previous.status === "generating") &&
-      selectedFrame.nextAction === "review"
-    ) {
-      reviewTimeout = window.setTimeout(() => {
-        notifications.show({
-          color: "cyan",
-          message: `${frameLabel(selectedFrame)} is ready to review inline.`,
-        });
-      }, 0);
-    }
-
-    previousSelectedFrameRef.current = {
-      id: selectedFrame?.id ?? null,
-      status: selectedFrame?.status ?? null,
-    };
-
-    return () => {
-      if (reviewTimeout !== null) {
-        window.clearTimeout(reviewTimeout);
-      }
-    };
-  }, [selectedFrame]);
 
   return (
     <>
@@ -1540,9 +1683,6 @@ export function MovieCreatorApp({
                 <Badge color={repairCount > 0 ? "orange" : "gray"} size="lg">
                   {repairCount} Needs Repair
                 </Badge>
-                <Badge color={reviewCount > 0 ? "yellow" : "gray"} size="lg">
-                  {reviewCount} Needs Review
-                </Badge>
                 <Badge color="teal" size="lg">
                   {stableCount} Stable
                 </Badge>
@@ -1602,8 +1742,8 @@ export function MovieCreatorApp({
                                 : frame.imagePrompt
                             }
                             detailsExpanded={expandedDetails[detailsKey("frame", frame.id)] ?? false}
+                            selectedGalleryTileId={getSelectedGalleryTileId(frame)}
                             onSelect={() => selectFrame(frame.id)}
-                            onPrimaryAction={() => void runFramePrimaryAction(frame)}
                             onDelete={() => void deleteFrame(frame.id)}
                             onZoom={setZoomTarget}
                             onPromptChange={setFramePromptDraft}
@@ -1625,7 +1765,24 @@ export function MovieCreatorApp({
                                 "Frame updated",
                               );
                             }}
-                            onApproveVersion={(versionId) => void approveVersion("frame", versionId)}
+                            onSelectGalleryAdd={() => setSelectedGalleryTile("frame", frame.id, GALLERY_ADD_TILE_ID)}
+                            onGenerateFromGallery={() => {
+                              selectFrame(frame.id);
+                              setSelectedGalleryTile("frame", frame.id, GALLERY_ADD_TILE_ID);
+                              void mutate(
+                                `/api/frames/${frame.id}/generate`,
+                                { method: "POST" },
+                                "Queued frame generation",
+                              );
+                            }}
+                            onApproveVersion={(versionId) => {
+                              void (async () => {
+                                const success = await approveVersion("frame", versionId);
+                                if (success) {
+                                  setSelectedGalleryTile("frame", frame.id, versionId);
+                                }
+                              })();
+                            }}
                           />
 
                           {transition && shouldShowTransition(transition) ? (
@@ -1639,8 +1796,8 @@ export function MovieCreatorApp({
                                   : transition.transitionPrompt
                               }
                               detailsExpanded={expandedDetails[detailsKey("transition", transition.id)] ?? false}
+                              selectedGalleryTileId={getSelectedGalleryTileId(transition)}
                               onSelect={() => selectTransition(transition.id)}
-                              onPrimaryAction={() => void runTransitionPrimaryAction(transition)}
                               onDelete={() => void deleteTransition(transition.id)}
                               onMovePair={() => {
                                 setSegmentMoveTarget(transition);
@@ -1654,7 +1811,30 @@ export function MovieCreatorApp({
                               }}
                               onPromptCommit={(value) => void commitTransitionPrompt(transition, value)}
                               onToggleDetails={() => toggleDetails("transition", transition.id)}
-                              onApproveVersion={(versionId) => void approveVersion("transition", versionId)}
+                              onSelectGalleryAdd={() =>
+                                setSelectedGalleryTile("transition", transition.id, GALLERY_ADD_TILE_ID)
+                              }
+                              onGenerateFromGallery={() => {
+                                selectTransition(transition.id);
+                                setSelectedGalleryTile("transition", transition.id, GALLERY_ADD_TILE_ID);
+                                void mutate(
+                                  "/api/transitions/bulk-generate",
+                                  {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ transitionIds: [transition.id] }),
+                                  },
+                                  "Queued transition generation",
+                                );
+                              }}
+                              onApproveVersion={(versionId) => {
+                                void (async () => {
+                                  const success = await approveVersion("transition", versionId);
+                                  if (success) {
+                                    setSelectedGalleryTile("transition", transition.id, versionId);
+                                  }
+                                })();
+                              }}
                             />
                           ) : null}
                         </Stack>

@@ -113,7 +113,7 @@ export type FrameStatus =
   | "approved"
   | "error";
 
-export type FrameNextAction = "generate" | "review" | null;
+export type FrameNextAction = "generate" | null;
 
 export type TransitionPromptStatus =
   | "blocked"
@@ -130,13 +130,15 @@ export type TransitionVideoStatus =
   | "stale"
   | "error";
 
-export type TransitionNextAction = "write_prompt" | "generate" | "review" | null;
+export type TransitionNextAction = "write_prompt" | "generate" | null;
 
 export type FrameView = Frame & {
   status: FrameStatus;
   approvedVersion: FrameVersion | null;
   latestVersion: FrameVersion | null;
   currentVersion: FrameVersion | null;
+  galleryVersions: FrameVersion[];
+  hasCurrentApproval: boolean;
   queuedJobs: number;
   nextAction: FrameNextAction;
   dependsOnPreviousFrame: boolean;
@@ -153,6 +155,9 @@ export type TransitionView = Transition & {
   toFrame: FrameView;
   approvedVideoVersion: TransitionVersion | null;
   latestVideoVersion: TransitionVersion | null;
+  currentVideo: TransitionVersion | null;
+  galleryVersions: TransitionVersion[];
+  hasCurrentApproval: boolean;
   isStale: boolean;
   nextAction: TransitionNextAction;
   blockedByFrameIds: string[];

@@ -86,7 +86,7 @@ describe("project transition reconciliation", () => {
     ).toBeGreaterThanOrEqual(1);
   });
 
-  test("transitions become confirmable when adjacent frames have generated versions but no approvals", () => {
+  test("transitions become generatable when adjacent frames have generated versions even without a prompt", () => {
     const manifest = createEmptyManifest("test");
     const first = frame("A");
     const second = frame("B");
@@ -98,31 +98,55 @@ describe("project transition reconciliation", () => {
 
     const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
     expect(snapshot.transitions).toHaveLength(1);
-    expect(snapshot.transitions[0]?.promptStatus).toBe("missing");
-    expect(snapshot.transitions[0]?.nextAction).toBe("write_prompt");
+    expect(snapshot.transitions[0]?.promptStatus).toBe("needs_confirmation");
+    expect(snapshot.transitions[0]?.nextAction).toBe("generate");
   });
 
-  test("frame next actions follow the derived workflow state", () => {
+  test("transition next action becomes generate without a prompt once endpoints are confirmed", () => {
+    const manifest = createEmptyManifest("test");
+    const first = frame("A");
+    const second = frame("B");
+    const firstVersion = frameVersion("framever_a");
+    const secondVersion = frameVersion("framever_b");
+    first.versions.push(firstVersion);
+    second.versions.push(secondVersion);
+    manifest.frames = [first, second].map((item, index) => ({ ...item, position: index }));
+
+    reconcileTransitions(manifest);
+    manifest.transitions[0]!.confirmedFromVersionId = firstVersion.id;
+    manifest.transitions[0]!.confirmedToVersionId = secondVersion.id;
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+    expect(snapshot.transitions[0]?.promptStatus).toBe("confirmed");
+    expect(snapshot.transitions[0]?.nextAction).toBe("generate");
+  });
+
+  test("frame next actions only queue generation work", () => {
     const manifest = createEmptyManifest("test");
     const draft = frame("Draft");
-    const needsReview = frame("Needs review");
+    const candidateOnly = frame("Candidate only");
     const approved = frame("Approved");
     const reviewVersion = frameVersion("framever_review");
     const approvedVersion = frameVersion("framever_approved");
 
-    needsReview.versions.push(reviewVersion);
+    candidateOnly.versions.push(reviewVersion);
     approved.versions.push(approvedVersion);
     approved.approvedVersionId = approvedVersion.id;
-    manifest.frames = [draft, needsReview, approved].map((item, index) => ({
+    manifest.frames = [draft, candidateOnly, approved].map((item, index) => ({
       ...item,
       position: index,
     }));
 
     const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
 
+    expect(snapshot.frames.map((item) => item.status)).toEqual([
+      "draft",
+      "generated_unreviewed",
+      "approved",
+    ]);
     expect(snapshot.frames.map((item) => [item.position, item.nextAction])).toEqual([
       [0, "generate"],
-      [1, "review"],
+      [1, null],
       [2, null],
     ]);
   });
@@ -145,7 +169,7 @@ describe("project transition reconciliation", () => {
     expect(snapshot.transitions[0]?.disabledReason).toBeNull();
   });
 
-  test("transition next action becomes review after a clip is generated but not approved", () => {
+  test("transition leaves candidate selection to details once a matching clip exists", () => {
     const manifest = createEmptyManifest("test");
     const first = frame("A");
     const second = frame("B");
@@ -178,7 +202,175 @@ describe("project transition reconciliation", () => {
     });
 
     const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
-    expect(snapshot.transitions[0]?.nextAction).toBe("review");
+    expect(snapshot.transitions[0]?.videoStatus).toBe("generated_unreviewed");
+    expect(snapshot.transitions[0]?.nextAction).toBeNull();
+  });
+
+  test("approved frame stays selected when a newer alternate candidate exists", () => {
+    const manifest = createEmptyManifest("test");
+    const current = frame("Current");
+    const approvedVersion = {
+      ...frameVersion("framever_current"),
+      sourcePrompt: current.imagePrompt,
+    };
+    const alternateVersion = {
+      ...frameVersion("framever_alternate"),
+      sourcePrompt: current.imagePrompt,
+    };
+
+    current.versions.push(approvedVersion, alternateVersion);
+    current.approvedVersionId = approvedVersion.id;
+    manifest.frames = [{ ...current, position: 0 }];
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+    expect(snapshot.frames[0]?.status).toBe("approved");
+    expect(snapshot.frames[0]?.currentVersion?.id).toBe(approvedVersion.id);
+    expect(snapshot.frames[0]?.latestVersion?.id).toBe(alternateVersion.id);
+    expect(snapshot.frames[0]?.galleryVersions.map((version) => version.id)).toEqual([
+      alternateVersion.id,
+      approvedVersion.id,
+    ]);
+  });
+
+  test("frame gallery hides stale versions and keeps newest compatible assets first", () => {
+    const manifest = createEmptyManifest("test");
+    const current = frame("Current");
+    const staleVersion = {
+      ...frameVersion("framever_stale"),
+      sourcePrompt: "Old prompt",
+    };
+    const firstCompatible = {
+      ...frameVersion("framever_first"),
+      sourcePrompt: current.imagePrompt,
+    };
+    const secondCompatible = {
+      ...frameVersion("framever_second"),
+      sourcePrompt: current.imagePrompt,
+    };
+
+    current.versions.push(staleVersion, firstCompatible, secondCompatible);
+    current.approvedVersionId = firstCompatible.id;
+    manifest.frames = [{ ...current, position: 0 }];
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+    expect(snapshot.frames[0]?.galleryVersions.map((version) => version.id)).toEqual([
+      secondCompatible.id,
+      firstCompatible.id,
+    ]);
+  });
+
+  test("approved transition stays selected when a newer alternate clip exists", () => {
+    const manifest = createEmptyManifest("test");
+    const first = frame("A");
+    const second = frame("B");
+    const firstVersion = frameVersion("framever_a");
+    const secondVersion = frameVersion("framever_b");
+    first.versions.push(firstVersion);
+    second.versions.push(secondVersion);
+    first.approvedVersionId = firstVersion.id;
+    second.approvedVersionId = secondVersion.id;
+    manifest.frames = [first, second].map((item, index) => ({ ...item, position: index }));
+
+    reconcileTransitions(manifest);
+
+    const transition = manifest.transitions[0]!;
+    transition.transitionPrompt = "Slow cinematic push";
+    transition.promptRevision = 1;
+    transition.confirmedFromVersionId = firstVersion.id;
+    transition.confirmedToVersionId = secondVersion.id;
+    const approvedVideo = {
+      id: createId("transitionver"),
+      model: "mock-video-model",
+      inputPayload: {},
+      outputPath: "transitions/current.mp4",
+      posterPath: "transitions/current.png",
+      generationJobId: createId("job"),
+      createdAt: nowIso(),
+      reviewerDecision: "approved" as const,
+      reviewerNotes: "",
+      promptRevision: 1,
+      fromApprovedVersionId: firstVersion.id,
+      toApprovedVersionId: secondVersion.id,
+    };
+    const alternateVideo = {
+      ...approvedVideo,
+      id: createId("transitionver"),
+      outputPath: "transitions/alternate.mp4",
+      posterPath: "transitions/alternate.png",
+      generationJobId: createId("job"),
+      reviewerDecision: "unreviewed" as const,
+    };
+    transition.versions.push(approvedVideo, alternateVideo);
+    transition.approvedVideoVersionId = approvedVideo.id;
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+    expect(snapshot.transitions[0]?.videoStatus).toBe("approved");
+    expect(snapshot.transitions[0]?.currentVideo?.id).toBe(approvedVideo.id);
+    expect(snapshot.transitions[0]?.latestVideoVersion?.id).toBe(alternateVideo.id);
+    expect(snapshot.transitions[0]?.galleryVersions.map((version) => version.id)).toEqual([
+      alternateVideo.id,
+      approvedVideo.id,
+    ]);
+  });
+
+  test("transition gallery hides stale clips and keeps newest compatible clips first", () => {
+    const manifest = createEmptyManifest("test");
+    const first = frame("A");
+    const second = frame("B");
+    const firstVersion = frameVersion("framever_a");
+    const secondVersion = frameVersion("framever_b");
+    first.versions.push(firstVersion);
+    second.versions.push(secondVersion);
+    first.approvedVersionId = firstVersion.id;
+    second.approvedVersionId = secondVersion.id;
+    manifest.frames = [first, second].map((item, index) => ({ ...item, position: index }));
+
+    reconcileTransitions(manifest);
+
+    const transition = manifest.transitions[0]!;
+    transition.transitionPrompt = "Slow cinematic push";
+    transition.promptRevision = 1;
+    transition.confirmedFromVersionId = firstVersion.id;
+    transition.confirmedToVersionId = secondVersion.id;
+
+    const staleVideo = {
+      id: createId("transitionver"),
+      model: "mock-video-model",
+      inputPayload: {},
+      outputPath: "transitions/stale.mp4",
+      posterPath: "transitions/stale.png",
+      generationJobId: createId("job"),
+      createdAt: nowIso(),
+      reviewerDecision: "unreviewed" as const,
+      reviewerNotes: "",
+      promptRevision: 0,
+      fromApprovedVersionId: firstVersion.id,
+      toApprovedVersionId: secondVersion.id,
+    };
+    const firstCompatible = {
+      ...staleVideo,
+      id: createId("transitionver"),
+      outputPath: "transitions/compatible-a.mp4",
+      posterPath: "transitions/compatible-a.png",
+      generationJobId: createId("job"),
+      promptRevision: 1,
+    };
+    const secondCompatible = {
+      ...firstCompatible,
+      id: createId("transitionver"),
+      outputPath: "transitions/compatible-b.mp4",
+      posterPath: "transitions/compatible-b.png",
+      generationJobId: createId("job"),
+    };
+
+    transition.versions.push(staleVideo, firstCompatible, secondCompatible);
+    transition.approvedVideoVersionId = firstCompatible.id;
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+    expect(snapshot.transitions[0]?.galleryVersions.map((version) => version.id)).toEqual([
+      secondCompatible.id,
+      firstCompatible.id,
+    ]);
   });
 
   test("transition disabled reason explains blocked generation when endpoint frames are missing", () => {
