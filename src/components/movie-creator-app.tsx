@@ -1202,7 +1202,6 @@ export function MovieCreatorApp() {
                     <Switch
                       label="Use previous frame as reference"
                       checked={selectedFrame.usePreviousFrameAsReference}
-                      disabled={!selectedFrameCanUsePreviousReference}
                       onChange={(event) => {
                         const checked = event.currentTarget.checked;
                         setSnapshot((current) =>
@@ -1239,7 +1238,7 @@ export function MovieCreatorApp() {
                     <Text c="dimmed" size="xs">
                       {selectedFrameCanUsePreviousReference
                         ? "When enabled, generation uses the previous frame's approved image, or its latest candidate if nothing is approved yet."
-                        : "The first frame has no previous frame to anchor to."}
+                        : "This frame has no previous frame yet, so no previous-frame reference will be added."}
                     </Text>
                     <Group justify="space-between" align="center">
                       <Badge color={frameStatusColor(selectedFrame)}>

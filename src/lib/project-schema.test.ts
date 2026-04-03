@@ -3,7 +3,7 @@ import { createEmptyManifest, createId, nowIso } from "./project-ops";
 import { projectManifestSchema } from "./project-schema";
 
 describe("project schema", () => {
-  test("defaults usePreviousFrameAsReference to false for older manifests", () => {
+  test("defaults usePreviousFrameAsReference to true for older manifests", () => {
     const manifest = createEmptyManifest("legacy-project");
     const timestamp = nowIso();
 
@@ -25,6 +25,6 @@ describe("project schema", () => {
       ],
     });
 
-    expect(parsed.frames[0]?.usePreviousFrameAsReference).toBe(false);
+    expect(parsed.frames[0]?.usePreviousFrameAsReference).toBe(true);
   });
 });

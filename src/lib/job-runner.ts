@@ -75,12 +75,12 @@ function resolveFrameReferenceImages(frame: Frame, manifest: ProjectManifest) {
   }
 
   if (frameIndex === 0) {
-    throw new Error("Previous-frame reference is unavailable for the first frame");
+    return frame.referenceImages;
   }
 
   const previousFrame = orderedFrames[frameIndex - 1];
   if (!previousFrame) {
-    throw new Error("Previous frame not found");
+    return frame.referenceImages;
   }
 
   const previousVersion = getApprovedFrameVersion(previousFrame) ?? getLatestFrameVersion(previousFrame);

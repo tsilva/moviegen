@@ -169,6 +169,38 @@ describe("frame job anchoring", () => {
     );
   });
 
+
+  test("does not error when previous-frame anchoring is enabled on the first frame", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    const firstReference = path.join("refs", "opening-shot.png");
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const second = createFrame("Second", 1);
+      first.referenceImages = [firstReference];
+      first.usePreviousFrameAsReference = true;
+      draft.frames = [first, second];
+      return draft;
+    });
+
+    await enqueueFrameGeneration([manifest.frames[0]!.id], {
+      candidateCount: 1,
+      size: "1280x720",
+      seedMode: "random",
+    });
+
+    const snapshot = await waitForFrameJobToSettle(projectPath);
+
+    expect(generateFrameImagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceImages: [firstReference],
+      }),
+    );
+    expect(snapshot.manifest.jobs[0]?.status).toBe("completed");
+  });
+
   test("uses the previous approved frame as the anchor reference", async () => {
     const projectPath = await createTempProject();
     tempDirs.push(projectPath);

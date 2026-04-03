@@ -27,7 +27,7 @@ export async function POST(request: Request) {
           title: row.title ?? "",
           imagePrompt: row.imagePrompt,
           referenceImages: row.referenceImages ?? [],
-          usePreviousFrameAsReference: row.usePreviousFrameAsReference ?? false,
+          usePreviousFrameAsReference: row.usePreviousFrameAsReference ?? true,
           notes: row.notes ?? "",
           approvedVersionId: null,
           versions: [],
