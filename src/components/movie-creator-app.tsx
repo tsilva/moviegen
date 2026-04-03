@@ -1,5 +1,6 @@
 "use client";
 
+import type { RefObject } from "react";
 import { useEffect, useEffectEvent, useRef, useState, useTransition } from "react";
 import Image from "next/image";
 import {
@@ -16,8 +17,6 @@ import {
   Modal,
   NumberInput,
   ScrollArea,
-  SegmentedControl,
-  SimpleGrid,
   Stack,
   Switch,
   Text,
@@ -37,12 +36,10 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   IconArrowsShuffle,
-  IconDotsVertical,
   IconFolderOpen,
   IconPlayerPause,
   IconPlayerPlay,
   IconPlus,
-  IconRefresh,
   IconSparkles,
   IconTrash,
   IconWand,
@@ -56,6 +53,16 @@ import type {
   TransitionVersion,
   TransitionView,
 } from "@/lib/types";
+import {
+  getFrameCardMeta,
+  getFrameGenerationDraft,
+  getFrameLabel,
+  getSequenceNextStep,
+  getSequenceOverviewStats,
+  getTransitionCardMeta,
+  getTransitionDisplayPrompt,
+  getTransitionLabel,
+} from "@/components/movie-creator-app.helpers";
 
 type ApiResult = ProjectSnapshot & {
   impact?: ReorderImpactSummary;
@@ -86,6 +93,7 @@ const PROJECT_PATH_PLACEHOLDER =
   process.env.NEXT_PUBLIC_DEFAULT_PROJECT_PATH ?? "/Users/tsilva/Desktop/moviegen";
 const WORKSPACE_HEIGHT = "calc(100dvh - 32px)";
 const GALLERY_ADD_TILE_ID = "__add__";
+const ENTRY_PREVIEW_WIDTH = 180;
 
 function assetUrl(relativePath: string | null | undefined) {
   if (!relativePath) {
@@ -95,174 +103,11 @@ function assetUrl(relativePath: string | null | undefined) {
   return `/api/assets?path=${encodeURIComponent(relativePath)}`;
 }
 
-function frameLabel(frame: Pick<FrameView, "position">) {
-  return `Frame ${frame.position + 1}`;
-}
-
-function transitionLabel(transition: Pick<TransitionView, "fromFrame" | "toFrame">) {
-  return `${frameLabel(transition.fromFrame)} to ${frameLabel(transition.toFrame)}`;
-}
-
-function frameStatusLabel(frame: FrameView) {
-  switch (frame.status) {
-    case "blocked_upstream":
-      return "Blocked";
-    case "stale_dependency":
-      return "Needs Repair";
-    case "queued":
-      return "Queued";
-    case "generating":
-      return "Generating";
-    case "generated_unreviewed":
-      return frame.hasCurrentApproval ? "Stable" : "Candidate";
-    case "approved":
-      return "Stable";
-    case "error":
-      return "Error";
-    default:
-      return "Draft";
-  }
-}
-
-function frameStatusColor(frame: FrameView) {
-  switch (frame.status) {
-    case "approved":
-      return "teal";
-    case "generated_unreviewed":
-      return frame.hasCurrentApproval ? "teal" : "cyan";
-    case "queued":
-    case "generating":
-      return "blue";
-    case "blocked_upstream":
-      return "gray";
-    case "stale_dependency":
-      return "orange";
-    case "error":
-      return "red";
-    default:
-      return "gray";
-  }
-}
-
-function frameSummary(frame: FrameView) {
-  if (frame.status === "blocked_upstream") {
-    return "An upstream frame changed or is still regenerating. This frame will unlock once the previous current output exists.";
-  }
-
-  if (frame.status === "stale_dependency") {
-    return "Its prompt, reference mode, or upstream frame changed. Regenerate this frame before the queue moves downstream.";
-  }
-
-  if (frame.status === "generated_unreviewed") {
-    return frame.hasCurrentApproval
-      ? "A newer alternate candidate exists. Open details if you want to switch the current frame."
-      : "A current candidate exists. Open details if you want to make it the selected frame.";
-  }
-
-  if (frame.status === "approved") {
-    return "This frame is aligned with the current dependency chain.";
-  }
-
-  if (frame.status === "queued" || frame.status === "generating") {
-    return "Repair is already running for this frame.";
-  }
-
-  if (frame.status === "error") {
-    return "The last generation attempt failed. Regenerate once the prompt or upstream state looks correct.";
-  }
-
-  return "No current output exists yet.";
-}
-
-function transitionStatusLabel(transition: TransitionView) {
-  if (transition.blockedByFrameIds.length > 0) {
-    return "Blocked";
-  }
-
-  switch (transition.videoStatus) {
-    case "queued":
-      return "Queued";
-    case "generating":
-      return "Generating";
-    case "generated_unreviewed":
-      return transition.hasCurrentApproval ? "Stable" : "Candidate";
-    case "approved":
-      return "Stable";
-    case "stale":
-      return "Needs Repair";
-    case "error":
-      return "Error";
-    default:
-      return "Ready";
-  }
-}
-
-function transitionStatusColor(transition: TransitionView) {
-  if (transition.blockedByFrameIds.length > 0) {
-    return "gray";
-  }
-
-  switch (transition.videoStatus) {
-    case "approved":
-      return "teal";
-    case "generated_unreviewed":
-      return transition.hasCurrentApproval ? "teal" : "cyan";
-    case "queued":
-    case "generating":
-      return "blue";
-    case "stale":
-      return "orange";
-    case "error":
-      return "red";
-    default:
-      return "cyan";
-  }
-}
-
-function transitionSummary(transition: TransitionView) {
-  if (transition.blockedByFrameIds.length > 0) {
-    return "One or both adjacent frames are not current yet. This clip stays blocked until the frame chain is repaired.";
-  }
-
-  if (transition.videoStatus === "stale" || transition.videoStatus === "not_ready") {
-    return transition.transitionPrompt.trim()
-      ? "The current frame pair changed or no matching clip exists. Generate a fresh transition for the latest pair."
-      : "No matching clip exists for the latest frame pair yet. Generate now, or add an optional prompt in details first.";
-  }
-
-  if (transition.videoStatus === "generated_unreviewed") {
-    return transition.hasCurrentApproval
-      ? "A newer alternate clip exists. Open details if you want to switch the current transition."
-      : "A current clip exists. Open details if you want to make it the selected transition.";
-  }
-
-  if (transition.videoStatus === "approved") {
-    return "This transition matches the latest current frame pair.";
-  }
-
-  if (transition.videoStatus === "queued" || transition.videoStatus === "generating") {
-    return "Repair is already running for this transition.";
-  }
-
-  if (transition.videoStatus === "error") {
-    return "The last generation attempt failed. Regenerate after the frame chain is stable.";
-  }
-
-  return "This transition is ready to generate.";
-}
-
-function frameDescriptor(frame: FrameView) {
-  return frame.imagePrompt || "Untitled frame";
-}
-
-function transitionDescriptor(transition: TransitionView) {
-  return transition.transitionPrompt || "Untitled transition";
-}
-
 type InlinePromptInputProps = {
   value: string;
   placeholder: string;
   name: string;
+  autoFocus?: boolean;
   onChange: (value: string) => void;
   onFocus: () => void;
   onCommit: (value: string) => void;
@@ -272,12 +117,24 @@ function InlinePromptInput({
   value,
   placeholder,
   name,
+  autoFocus = false,
   onChange,
   onFocus,
   onCommit,
 }: InlinePromptInputProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!autoFocus) {
+      return;
+    }
+
+    inputRef.current?.focus();
+  }, [autoFocus]);
+
   return (
     <TextInput
+      ref={inputRef}
       value={value}
       onChange={(event) => onChange(event.currentTarget.value)}
       onFocus={onFocus}
@@ -451,6 +308,7 @@ type AssetGalleryProps<TVersion extends FrameVersion | TransitionVersion> = {
   selectedTileId: string;
   pending: boolean;
   kind: "frame" | "transition";
+  getVersionLabel?: (version: TVersion) => string;
   addTileDisabled?: boolean;
   addTileDescription?: string;
   onSelectAdd: () => void;
@@ -463,6 +321,7 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
   selectedTileId,
   pending,
   kind,
+  getVersionLabel,
   addTileDisabled = false,
   addTileDescription,
   onSelectAdd,
@@ -479,12 +338,14 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
           {versions.length === 1 ? "" : "s"}
         </Text>
       </Group>
-      <SimpleGrid cols={{ base: 2, md: 4 }} spacing="sm">
+      <Group gap="sm" align="stretch">
         <UnstyledButton
           disabled={addTileDisabled}
           onClick={onSelectAdd}
           style={{
             display: "block",
+            width: ENTRY_PREVIEW_WIDTH,
+            flex: `0 0 ${ENTRY_PREVIEW_WIDTH}px`,
             borderRadius: 16,
             border:
               selectedTileId === GALLERY_ADD_TILE_ID
@@ -524,6 +385,8 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
               onClick={() => onSelectVersion(version.id)}
               style={{
                 display: "block",
+                width: ENTRY_PREVIEW_WIDTH,
+                flex: `0 0 ${ENTRY_PREVIEW_WIDTH}px`,
                 borderRadius: 16,
                 border: isSelected ? "1px solid rgba(94, 230, 176, 0.72)" : "1px solid rgba(255,255,255,0.08)",
                 background: isSelected ? "rgba(28, 84, 67, 0.3)" : "rgba(255,255,255,0.02)",
@@ -562,19 +425,14 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
                     />
                   )}
                 </Box>
-                <Group justify="space-between" gap="xs">
-                  <Text c="dimmed" size="xs" truncate>
-                    {version.model}
-                  </Text>
-                  <Badge color={isSelected ? "teal" : "gray"} variant={isSelected ? "filled" : "light"}>
-                    {isSelected ? "Current" : "Available"}
-                  </Badge>
-                </Group>
+                <Text c="dimmed" size="xs" truncate>
+                  {getVersionLabel?.(version) ?? version.model}
+                </Text>
               </Stack>
             </UnstyledButton>
           );
         })}
-      </SimpleGrid>
+      </Group>
     </Stack>
   );
 }
@@ -583,48 +441,43 @@ type FrameQueueCardProps = {
   frame: FrameView;
   selected: boolean;
   reorderMode: boolean;
-  promptValue: string;
   selectedGalleryTileId: string;
   onSelect: () => void;
   onDelete: () => void;
   onZoom: (target: ZoomTarget) => void;
-  onPromptChange: (value: string) => void;
-  onPromptFocus: () => void;
-  onPromptCommit: (value: string) => void;
-  onReferenceModeChange: (checked: boolean) => void;
   onSelectGalleryAdd: () => void;
-  onGenerateFromGallery: () => void;
   onApproveVersion: (versionId: string) => void;
+  onPrimaryAction: () => void;
+  cardRef: (node: HTMLDivElement | null) => void;
 };
 
 function FrameQueueCard({
   frame,
   selected,
   reorderMode,
-  promptValue,
   selectedGalleryTileId,
   onSelect,
   onDelete,
   onZoom,
-  onPromptChange,
-  onPromptFocus,
-  onPromptCommit,
-  onReferenceModeChange,
   onSelectGalleryAdd,
-  onGenerateFromGallery,
   onApproveVersion,
+  onPrimaryAction,
+  cardRef,
 }: FrameQueueCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: frame.id,
   });
   const previewVersion = frame.currentVersion ?? frame.approvedVersion ?? frame.latestVersion;
   const isPending = frame.status === "queued" || frame.status === "generating";
-  const addTileSelected = selectedGalleryTileId === GALLERY_ADD_TILE_ID;
-  const canGenerate = !isPending && frame.status !== "blocked_upstream";
+  const meta = getFrameCardMeta(frame, selectedGalleryTileId);
+  const setRefs = (node: HTMLDivElement | null) => {
+    setNodeRef(node);
+    cardRef(node);
+  };
 
   return (
     <Card
-      ref={setNodeRef}
+      ref={setRefs}
       withBorder
       radius="xl"
       p="md"
@@ -644,9 +497,9 @@ function FrameQueueCard({
             <ZoomableThumb
               src={previewVersion?.thumbnailPath}
               zoomSrc={previewVersion?.outputPath}
-              alt={frameLabel(frame)}
+              alt={getFrameLabel(frame)}
               emptyLabel={frame.status === "queued" || frame.status === "generating" ? "Preparing…" : "No image"}
-              width={180}
+              width={ENTRY_PREVIEW_WIDTH}
               onZoom={onZoom}
             />
             {frame.status === "queued" || frame.status === "generating" ? (
@@ -673,25 +526,13 @@ function FrameQueueCard({
 
           <Stack gap="xs" style={{ flex: 1, minWidth: 0 }}>
             <Group justify="space-between" align="flex-start" wrap="nowrap">
-              <Group gap="xs" wrap="nowrap">
-                <Badge color={frameStatusColor(frame)}>{frameStatusLabel(frame)}</Badge>
-                {frame.dependsOnPreviousFrame ? (
-                  <Badge variant="light" color="gray">
-                    Anchored
-                  </Badge>
-                ) : null}
-                {frame.downstreamImpactCount > 0 ? (
-                  <Badge variant="light" color="orange">
-                    +{frame.downstreamImpactCount} downstream
-                  </Badge>
-                ) : null}
-              </Group>
+              <Badge color={meta.statusColor}>{meta.statusLabel}</Badge>
               <Group gap="xs">
                 {reorderMode ? (
                   <ActionIcon
                     variant="subtle"
                     color="gray"
-                    aria-label={`Drag ${frameLabel(frame)}`}
+                    aria-label={`Drag ${getFrameLabel(frame)}`}
                     {...attributes}
                     {...listeners}
                     onClick={(event) => event.stopPropagation()}
@@ -699,47 +540,45 @@ function FrameQueueCard({
                     <IconArrowsShuffle size={16} aria-hidden="true" />
                   </ActionIcon>
                 ) : null}
-                <Menu withinPortal position="bottom-end">
-                  <Menu.Target>
-                    <ActionIcon
-                      variant="subtle"
-                      color="gray"
-                      aria-label={`${frameLabel(frame)} actions`}
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      <IconDotsVertical size={16} aria-hidden="true" />
-                    </ActionIcon>
-                  </Menu.Target>
-                  <Menu.Dropdown onClick={(event) => event.stopPropagation()}>
-                    <Menu.Item color="red" leftSection={<IconTrash size={14} aria-hidden="true" />} onClick={onDelete}>
-                      Delete frame
-                    </Menu.Item>
-                  </Menu.Dropdown>
-                </Menu>
+                <ActionIcon
+                  variant="subtle"
+                  color="red"
+                  aria-label={`Delete ${getFrameLabel(frame)}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDelete();
+                  }}
+                >
+                  <IconTrash size={16} aria-hidden="true" />
+                </ActionIcon>
               </Group>
             </Group>
 
             <Group justify="space-between" align="flex-start" wrap="nowrap">
               <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
-                {selected ? (
-                  <InlinePromptInput
-                    value={promptValue}
-                    onChange={onPromptChange}
-                    onFocus={onPromptFocus}
-                    onCommit={onPromptCommit}
-                    placeholder="Untitled frame"
-                    name={`frame-prompt-${frame.id}`}
-                  />
-                ) : (
-                  <Text fw={600} lineClamp={2}>
-                    {frameDescriptor(frame)}
-                  </Text>
-                )}
+                <Text fw={700}>{meta.title}</Text>
+                <Text c={meta.promptPlaceholder ? "dimmed" : undefined} size="sm" lineClamp={2}>
+                  {meta.prompt}
+                </Text>
               </Stack>
+              {meta.action ? (
+                <Button
+                  variant={meta.action.intent === "review" ? "light" : "filled"}
+                  color={meta.action.color}
+                  size="xs"
+                  disabled={meta.action.disabled}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onPrimaryAction();
+                  }}
+                >
+                  {meta.action.label}
+                </Button>
+              ) : null}
             </Group>
 
             <Text c="dimmed" size="sm">
-              {frameSummary(frame)}
+              {meta.summary}
             </Text>
           </Stack>
         </Group>
@@ -748,59 +587,17 @@ function FrameQueueCard({
           <>
             <Divider color="rgba(255,255,255,0.08)" />
             <Stack gap="md" onClick={(event) => event.stopPropagation()}>
-              <Switch
-                checked={frame.usePreviousFrameAsReference}
-                onChange={(event) => onReferenceModeChange(event.currentTarget.checked)}
-                label="Use Previous Frame As Reference"
-              />
-              <Text c="dimmed" size="sm">
-                {frame.usePreviousFrameAsReference
-                  ? "This frame inherits continuity from the previous current frame output."
-                  : "This frame stands on its own and does not repair automatically from upstream changes."}
-              </Text>
               <AssetGallery
                 title="Asset Gallery"
                 versions={frame.galleryVersions}
                 selectedTileId={selectedGalleryTileId}
                 pending={isPending}
                 kind="frame"
+                getVersionLabel={(version) => version.sourcePrompt?.trim() || "No frame prompt yet"}
+                addTileDisabled={isPending}
                 onSelectAdd={onSelectGalleryAdd}
                 onSelectVersion={onApproveVersion}
               />
-              {addTileSelected ? (
-                <Card withBorder radius="lg" p="sm" style={{ background: "rgba(255,255,255,0.02)" }}>
-                  <Stack gap="xs">
-                    <Group justify="space-between" align="center">
-                      <Text fw={600} size="sm">
-                        {isPending ? "Generation In Progress" : "Generate New Frame"}
-                      </Text>
-                      {frame.disabledReason ? (
-                        <Badge color="gray" variant="light">
-                          Unavailable
-                        </Badge>
-                      ) : null}
-                    </Group>
-                    <Text c="dimmed" size="sm">
-                      {isPending
-                        ? "This slot will be replaced by the finished frame, then a fresh add tile will return to the gallery."
-                        : "Generate a fresh frame candidate for the current prompt and dependency state."}
-                    </Text>
-                    {!canGenerate && frame.disabledReason ? (
-                      <Text c="dimmed" size="sm">
-                        {frame.disabledReason}
-                      </Text>
-                    ) : null}
-                    <Button
-                      leftSection={<IconSparkles size={16} aria-hidden="true" />}
-                      onClick={onGenerateFromGallery}
-                      disabled={!canGenerate}
-                      loading={isPending}
-                    >
-                      Generate Frame
-                    </Button>
-                  </Stack>
-                </Card>
-              ) : null}
             </Stack>
           </>
         ) : null}
@@ -815,15 +612,18 @@ type TransitionQueueCardProps = {
   reorderMode: boolean;
   promptValue: string;
   selectedGalleryTileId: string;
+  promptAutoFocus: boolean;
+  isPlaying: boolean;
   onSelect: () => void;
   onDelete: () => void;
   onMovePair: () => void;
-  onZoom: (target: ZoomTarget) => void;
   onPromptChange: (value: string) => void;
   onPromptFocus: () => void;
   onPromptCommit: (value: string) => void;
   onGenerateFromGallery: () => void;
   onApproveVersion: (versionId: string) => void;
+  onPrimaryAction: () => void;
+  cardRef: (node: HTMLDivElement | null) => void;
 };
 
 function TransitionQueueCard({
@@ -832,20 +632,22 @@ function TransitionQueueCard({
   reorderMode,
   promptValue,
   selectedGalleryTileId,
+  promptAutoFocus,
+  isPlaying,
   onSelect,
   onDelete,
   onMovePair,
-  onZoom,
   onPromptChange,
   onPromptFocus,
   onPromptCommit,
   onGenerateFromGallery,
   onApproveVersion,
+  onPrimaryAction,
+  cardRef,
 }: TransitionQueueCardProps) {
   const previewVideo = transition.currentVideo ?? transition.approvedVideoVersion ?? transition.latestVideoVersion;
-  const fromPreview = transition.fromFrame.currentVersion ?? transition.fromFrame.latestVersion;
-  const toPreview = transition.toFrame.currentVersion ?? transition.toFrame.latestVersion;
   const isPending = transition.videoStatus === "queued" || transition.videoStatus === "generating";
+  const meta = getTransitionCardMeta(transition);
   const canGenerate =
     !isPending &&
     transition.blockedByFrameIds.length === 0 &&
@@ -855,9 +657,16 @@ function TransitionQueueCard({
     : transition.transitionPrompt.trim()
       ? null
       : "Add a transition prompt before generating a clip.";
+  const statusLabel = isPlaying ? "Playing" : meta.statusLabel;
+  const statusColor = isPlaying ? "teal" : meta.statusColor;
+  const summary = isPlaying ? "This clip is currently loaded in the preview player." : meta.summary;
+  const action = isPlaying
+    ? { intent: "pending" as const, label: "Playing", color: "blue" as const, disabled: true }
+    : meta.action;
 
   return (
     <Card
+      ref={cardRef}
       withBorder
       radius="xl"
       p="md"
@@ -895,88 +704,93 @@ function TransitionQueueCard({
               />
             </Box>
           ) : (
-            <SimpleGrid cols={2} spacing="xs" style={{ width: 220, flex: "0 0 220px" }}>
-              <ZoomableThumb
-                src={fromPreview?.thumbnailPath}
-                zoomSrc={fromPreview?.outputPath}
-                alt={frameLabel(transition.fromFrame)}
-                emptyLabel="Pending"
-                width={104}
-                onZoom={onZoom}
-              />
-              <ZoomableThumb
-                src={toPreview?.thumbnailPath}
-                zoomSrc={toPreview?.outputPath}
-                alt={frameLabel(transition.toFrame)}
-                emptyLabel="Pending"
-                width={104}
-                onZoom={onZoom}
-              />
-            </SimpleGrid>
+            <Box
+              style={{
+                width: 220,
+                flex: "0 0 220px",
+                aspectRatio: "16 / 9",
+                overflow: "hidden",
+                borderRadius: 14,
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid rgba(255,255,255,0.08)",
+              }}
+            >
+              <Flex h="100%" align="center" justify="center">
+                <Text c="dimmed" size="sm">
+                  {isPending ? "Generating movie..." : "Movie pending"}
+                </Text>
+              </Flex>
+            </Box>
           )}
 
           <Stack gap="xs" style={{ flex: 1, minWidth: 0 }}>
             <Group justify="space-between" align="flex-start" wrap="nowrap">
-              <Group gap="xs" wrap="nowrap">
-                <Badge color={transitionStatusColor(transition)}>{transitionStatusLabel(transition)}</Badge>
-                {transition.downstreamImpactCount > 0 ? (
-                  <Badge variant="light" color="orange">
-                    +{transition.downstreamImpactCount} downstream
-                  </Badge>
-                ) : null}
-              </Group>
-              <Menu withinPortal position="bottom-end">
-                <Menu.Target>
+              <Badge color={statusColor}>{statusLabel}</Badge>
+              <Group gap="xs">
+                {reorderMode ? (
                   <ActionIcon
                     variant="subtle"
                     color="gray"
-                    aria-label={`${transitionLabel(transition)} actions`}
-                    onClick={(event) => event.stopPropagation()}
+                    aria-label={`Move ${getTransitionLabel(transition)}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onMovePair();
+                    }}
                   >
-                    <IconDotsVertical size={16} aria-hidden="true" />
+                    <IconArrowsShuffle size={16} aria-hidden="true" />
                   </ActionIcon>
-                </Menu.Target>
-                <Menu.Dropdown onClick={(event) => event.stopPropagation()}>
-                  {reorderMode ? (
-                    <Menu.Item
-                      leftSection={<IconArrowsShuffle size={14} aria-hidden="true" />}
-                      onClick={onMovePair}
-                    >
-                      Move Pair
-                    </Menu.Item>
-                  ) : null}
-                  <Menu.Item
-                    color="red"
-                    leftSection={<IconTrash size={14} aria-hidden="true" />}
-                    onClick={onDelete}
-                  >
-                    Delete transition
-                  </Menu.Item>
-                </Menu.Dropdown>
-              </Menu>
+                ) : null}
+                <ActionIcon
+                  variant="subtle"
+                  color="red"
+                  aria-label={`Delete ${getTransitionLabel(transition)}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDelete();
+                  }}
+                >
+                  <IconTrash size={16} aria-hidden="true" />
+                </ActionIcon>
+              </Group>
             </Group>
 
             <Group justify="space-between" align="flex-start" wrap="nowrap">
               <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
+                <Text fw={700}>{meta.title}</Text>
                 {selected ? (
                   <InlinePromptInput
                     value={promptValue}
                     onChange={onPromptChange}
                     onFocus={onPromptFocus}
                     onCommit={onPromptCommit}
-                    placeholder="Untitled transition"
+                    placeholder="No transition prompt yet"
                     name={`transition-prompt-${transition.id}`}
+                    autoFocus={promptAutoFocus}
                   />
                 ) : (
-                  <Text fw={600} lineClamp={2}>
-                    {transitionDescriptor(transition)}
+                  <Text c={meta.promptPlaceholder ? "dimmed" : undefined} size="sm" lineClamp={2}>
+                    {meta.prompt}
                   </Text>
                 )}
               </Stack>
+              {action ? (
+                <Button
+                  variant={action.intent === "review" ? "light" : "filled"}
+                  color={action.color}
+                  size="xs"
+                  disabled={action.disabled}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onPrimaryAction();
+                  }}
+                >
+                  {action.label}
+                </Button>
+              ) : null}
             </Group>
 
             <Text c="dimmed" size="sm">
-              {transitionSummary(transition)}
+              {summary}
             </Text>
           </Stack>
         </Group>
@@ -991,6 +805,7 @@ function TransitionQueueCard({
                 selectedTileId={selectedGalleryTileId}
                 pending={isPending}
                 kind="transition"
+                getVersionLabel={() => getTransitionDisplayPrompt(transition)}
                 addTileDisabled={!canGenerate}
                 addTileDescription={generateDisabledReason ?? undefined}
                 onSelectAdd={onGenerateFromGallery}
@@ -1040,6 +855,289 @@ function ZoomModal({ target, onClose }: ZoomModalProps) {
   );
 }
 
+type AddFrameSeparatorProps = {
+  label: string;
+  onClick: () => void;
+};
+
+function AddFrameSeparator({ label, onClick }: AddFrameSeparatorProps) {
+  return (
+    <UnstyledButton
+      aria-label={label}
+      onClick={onClick}
+      style={{ display: "block", width: "100%", padding: "4px 0" }}
+    >
+      <Group gap="sm" wrap="nowrap">
+        <Box
+          style={{
+            flex: 1,
+            height: 1,
+            background:
+              "linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,0.16), rgba(255,255,255,0))",
+          }}
+        />
+        <Box
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: 999,
+            display: "grid",
+            placeItems: "center",
+            border: "1px solid rgba(255,255,255,0.12)",
+            background: "rgba(255,255,255,0.03)",
+            color: "rgba(255,255,255,0.72)",
+          }}
+        >
+          <IconPlus size={14} aria-hidden="true" />
+        </Box>
+        <Box
+          style={{
+            flex: 1,
+            height: 1,
+            background:
+              "linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,0.16), rgba(255,255,255,0))",
+          }}
+        />
+      </Group>
+    </UnstyledButton>
+  );
+}
+
+type SequenceOverviewProps = {
+  currentClipCount: number;
+  totalTransitionCount: number;
+  missingInputCount: number;
+  actionableGenerationCount: number;
+  inProgressCount: number;
+  nextStepTitle: string;
+  nextStepDescription: string;
+  nextStepCtaLabel: string | null;
+  activeMovieClip: MoviePlaylistEntry | null;
+  movieIndex: number;
+  moviePlaylist: MoviePlaylistEntry[];
+  movieIsPlaying: boolean;
+  missingMovieTransitions: TransitionView[];
+  movieVideoRef: RefObject<HTMLVideoElement | null>;
+  onTogglePlayback: () => void;
+  onSelectMovieClip: (index: number) => void;
+  onNextStep: () => void;
+  onLoadedData: () => void;
+  onPlay: () => void;
+  onPause: () => void;
+  onEnded: () => void;
+};
+
+function SequenceOverview({
+  currentClipCount,
+  totalTransitionCount,
+  missingInputCount,
+  actionableGenerationCount,
+  inProgressCount,
+  nextStepTitle,
+  nextStepDescription,
+  nextStepCtaLabel,
+  activeMovieClip,
+  movieIndex,
+  moviePlaylist,
+  movieIsPlaying,
+  missingMovieTransitions,
+  movieVideoRef,
+  onTogglePlayback,
+  onSelectMovieClip,
+  onNextStep,
+  onLoadedData,
+  onPlay,
+  onPause,
+  onEnded,
+}: SequenceOverviewProps) {
+  return (
+    <Card
+      withBorder
+      radius="xl"
+      p="md"
+      style={{
+        position: "sticky",
+        top: 0,
+        zIndex: 20,
+        background: "rgba(10, 16, 24, 0.92)",
+        backdropFilter: "blur(18px)",
+        borderColor: "rgba(84, 96, 112, 0.32)",
+      }}
+    >
+      <Stack gap="md">
+        <Flex gap="lg" wrap="wrap" align="stretch">
+          <Stack gap="md" style={{ flex: "1 1 360px", minWidth: 0 }}>
+            <Stack gap={4}>
+              <Title order={4}>Sequence Overview</Title>
+              <Text c="dimmed" size="sm">
+                Keep the current cut in view, see what is blocked, and take the next useful step without leaving the sequence.
+              </Text>
+            </Stack>
+
+            <Group gap="sm" align="stretch">
+              {[
+                {
+                  label: "Current Cut",
+                  value: `${currentClipCount}/${totalTransitionCount}`,
+                  description: totalTransitionCount === 1 ? "clip ready" : "clips ready",
+                },
+                {
+                  label: "Missing Input",
+                  value: String(missingInputCount),
+                  description: missingInputCount === 1 ? "prompt to add" : "prompts to add",
+                },
+                {
+                  label: "Ready To Generate",
+                  value: String(actionableGenerationCount),
+                  description: actionableGenerationCount === 1 ? "item waiting" : "items waiting",
+                },
+                {
+                  label: "In Progress",
+                  value: String(inProgressCount),
+                  description: inProgressCount === 1 ? "job running" : "jobs running",
+                },
+              ].map((stat) => (
+                <Box
+                  key={stat.label}
+                  style={{
+                    flex: "1 1 120px",
+                    minWidth: 120,
+                    padding: 12,
+                    borderRadius: 14,
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    background: "rgba(255,255,255,0.03)",
+                  }}
+                >
+                  <Text c="dimmed" size="xs" tt="uppercase" fw={700}>
+                    {stat.label}
+                  </Text>
+                  <Text fw={700} size="lg">
+                    {stat.value}
+                  </Text>
+                  <Text c="dimmed" size="xs">
+                    {stat.description}
+                  </Text>
+                </Box>
+              ))}
+            </Group>
+
+            <Box
+              style={{
+                padding: 14,
+                borderRadius: 16,
+                border: "1px solid rgba(78, 201, 240, 0.22)",
+                background: "rgba(26, 38, 51, 0.48)",
+              }}
+            >
+              <Group justify="space-between" align="flex-start" gap="md" wrap="nowrap">
+                <Stack gap={4} style={{ minWidth: 0, flex: 1 }}>
+                  <Text c="dimmed" size="xs" tt="uppercase" fw={700}>
+                    Next Up
+                  </Text>
+                  <Text fw={700}>{nextStepTitle}</Text>
+                  <Text c="dimmed" size="sm">
+                    {nextStepDescription}
+                  </Text>
+                </Stack>
+                {nextStepCtaLabel ? (
+                  <Button color="cyan" onClick={onNextStep}>
+                    {nextStepCtaLabel}
+                  </Button>
+                ) : null}
+              </Group>
+            </Box>
+          </Stack>
+
+          <Stack gap="sm" style={{ flex: "0 1 460px", minWidth: 320 }}>
+            <Group justify="space-between" align="flex-start">
+              <Stack gap={2}>
+                <Text fw={700}>Current Cut</Text>
+                <Text c="dimmed" size="sm">
+                  {missingMovieTransitions.length > 0
+                    ? `${missingMovieTransitions.length} transition${missingMovieTransitions.length === 1 ? "" : "s"} still missing a current clip.`
+                    : currentClipCount > 0
+                      ? "The current sequence is fully playable."
+                      : "Generate the first transition clip to start playback."}
+                </Text>
+              </Stack>
+              <Group gap="xs">
+                <Button
+                  size="xs"
+                  leftSection={
+                    movieIsPlaying ? <IconPlayerPause size={14} aria-hidden="true" /> : <IconPlayerPlay size={14} aria-hidden="true" />
+                  }
+                  disabled={!activeMovieClip}
+                  onClick={onTogglePlayback}
+                >
+                  {movieIsPlaying ? "Pause" : "Play"}
+                </Button>
+                <Button
+                  size="xs"
+                  variant="light"
+                  onClick={() => onSelectMovieClip(movieIndex - 1)}
+                  disabled={!moviePlaylist.length || movieIndex === 0}
+                >
+                  Previous
+                </Button>
+                <Button
+                  size="xs"
+                  variant="light"
+                  onClick={() => onSelectMovieClip(movieIndex + 1)}
+                  disabled={!moviePlaylist.length || movieIndex >= moviePlaylist.length - 1}
+                >
+                  Next
+                </Button>
+              </Group>
+            </Group>
+
+            <Box
+              style={{
+                borderRadius: 16,
+                overflow: "hidden",
+                border: "1px solid rgba(255,255,255,0.08)",
+                background: "rgba(255,255,255,0.03)",
+              }}
+            >
+              {activeMovieClip ? (
+                <Stack gap={0}>
+                  <Box style={{ aspectRatio: "16 / 9", background: "rgba(255,255,255,0.04)" }}>
+                    <video
+                      key={activeMovieClip.clipId}
+                      ref={movieVideoRef}
+                      controls
+                      playsInline
+                      preload="auto"
+                      poster={activeMovieClip.posterSrc}
+                      src={activeMovieClip.src}
+                      style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
+                      onLoadedData={onLoadedData}
+                      onPlay={onPlay}
+                      onPause={onPause}
+                      onEnded={onEnded}
+                    />
+                  </Box>
+                  <Box p="sm">
+                    <Text fw={700}>{activeMovieClip.label}</Text>
+                    <Text c="dimmed" size="sm">
+                      Clip {movieIndex + 1} of {moviePlaylist.length} · {activeMovieClip.model}
+                    </Text>
+                  </Box>
+                </Stack>
+              ) : (
+                <Flex mih={220} align="center" justify="center" p="md">
+                  <Text c="dimmed" size="sm">
+                    No current transition clips are ready yet.
+                  </Text>
+                </Flex>
+              )}
+            </Box>
+          </Stack>
+        </Flex>
+      </Stack>
+    </Card>
+  );
+}
+
 export function MovieCreatorApp({
   initialSnapshot = null,
   initialProjectPath = DEFAULT_PROJECT_PATH,
@@ -1057,9 +1155,12 @@ export function MovieCreatorApp({
   const [segmentIndex, setSegmentIndex] = useState(0);
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [bulkInsertIndex, setBulkInsertIndex] = useState<number | null>(null);
+  const [frameGenerationTargetId, setFrameGenerationTargetId] = useState<string | null>(null);
+  const [frameGenerationPromptDraft, setFrameGenerationPromptDraft] = useState("");
+  const [frameGenerationUsePreviousDraft, setFrameGenerationUsePreviousDraft] = useState(false);
   const [reorderMode, setReorderMode] = useState(false);
-  const [activeEditor, setActiveEditor] = useState<null | "framePrompt" | "transitionPrompt">(null);
-  const [framePromptDraft, setFramePromptDraft] = useState("");
+  const [activeEditor, setActiveEditor] = useState<null | "transitionPrompt">(null);
   const [transitionPromptDraft, setTransitionPromptDraft] = useState("");
   const [gallerySelection, setGallerySelection] = useState<Record<string, string>>({});
   const [movieCursor, setMovieCursor] = useState(0);
@@ -1067,6 +1168,8 @@ export function MovieCreatorApp({
   const [isPending, startTransition] = useTransition();
   const previousPendingByEntryRef = useRef<Record<string, boolean>>({});
   const movieVideoRef = useRef<HTMLVideoElement | null>(null);
+  const frameCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const transitionCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
   const normalizedProjectPath = projectPath.trim();
 
@@ -1119,9 +1222,12 @@ export function MovieCreatorApp({
       setMovieCursor(0);
       setMoviePlaying(false);
       movieVideoRef.current?.pause();
-      setFramePromptDraft(
-        result.frames.find((frame) => frame.id === nextSelection.selectedFrameId)?.imagePrompt ?? "",
-      );
+      setBulkInput("");
+      setBulkModalOpen(false);
+      setBulkInsertIndex(null);
+      setFrameGenerationTargetId(null);
+      setFrameGenerationPromptDraft("");
+      setFrameGenerationUsePreviousDraft(false);
       setTransitionPromptDraft(
         result.transitions.find((transition) => transition.id === nextSelection.selectedTransitionId)?.transitionPrompt ?? "",
       );
@@ -1157,7 +1263,7 @@ export function MovieCreatorApp({
   }
 
   useEffect(() => {
-    if (activeEditor) {
+    if (activeEditor || frameGenerationTargetId) {
       return;
     }
 
@@ -1173,7 +1279,7 @@ export function MovieCreatorApp({
     return () => {
       window.clearInterval(interval);
     };
-  }, [activeEditor, snapshot?.manifest.jobs]);
+  }, [activeEditor, frameGenerationTargetId, snapshot?.manifest.jobs]);
 
   useEffect(() => {
     if (!snapshot) {
@@ -1257,8 +1363,7 @@ export function MovieCreatorApp({
 
   const frames = snapshot?.frames ?? [];
   const transitions = snapshot?.transitions ?? [];
-  const viewMode = snapshot?.manifest.ui.viewMode ?? "sequence";
-  const filter = snapshot?.manifest.ui.filter ?? "needsRepair";
+  const frameGenerationTarget = frames.find((frame) => frame.id === frameGenerationTargetId) ?? null;
   const transitionMap = new Map(transitions.map((transition) => [transition.fromFrameId, transition]));
   const moviePlaylist: MoviePlaylistEntry[] = transitions.flatMap((transition) => {
     if (!transition.currentVideo) {
@@ -1269,7 +1374,7 @@ export function MovieCreatorApp({
       {
         clipId: transition.currentVideo.id,
         transitionId: transition.id,
-        label: transitionLabel(transition),
+        label: getTransitionLabel(transition),
         src: assetUrl(transition.currentVideo.outputPath),
         posterSrc: assetUrl(transition.currentVideo.posterPath) || undefined,
         model: transition.currentVideo.model,
@@ -1280,46 +1385,10 @@ export function MovieCreatorApp({
   const movieIndex = moviePlaylist.length ? Math.min(movieCursor, moviePlaylist.length - 1) : 0;
   const activeMovieClip = moviePlaylist[movieIndex] ?? null;
   const movieIsPlaying = moviePlaying && activeMovieClip != null;
+  const overviewStats = getSequenceOverviewStats(frames, transitions, moviePlaylist.length);
+  const nextStep = getSequenceNextStep(frames, transitions, moviePlaylist.length);
 
-  function shouldShowFrame(frame: FrameView) {
-    if (reorderMode) {
-      return true;
-    }
-
-    if (filter === "all") {
-      return true;
-    }
-
-    return frame.nextAction != null || frame.status === "blocked_upstream" || frame.status === "queued" || frame.status === "generating";
-  }
-
-  function shouldShowTransition(transition: TransitionView) {
-    if (reorderMode) {
-      return true;
-    }
-
-    if (filter === "all") {
-      return true;
-    }
-
-    return (
-      transition.nextAction != null ||
-      transition.blockedByFrameIds.length > 0 ||
-      transition.videoStatus === "queued" ||
-      transition.videoStatus === "generating"
-    );
-  }
-
-  const visibleFrames = frames.filter(shouldShowFrame);
-  const actionableQueue = [
-    ...frames.filter((frame) => frame.nextAction != null),
-    ...transitions.filter((transition) => transition.nextAction != null),
-  ].sort((left, right) => left.queueRank - right.queueRank);
-
-  const repairCount = frames.filter((frame) => frame.status === "draft" || frame.status === "stale_dependency" || frame.status === "error").length +
-    transitions.filter((transition) => transition.nextAction === "generate" || transition.nextAction === "write_prompt").length;
-  const stableCount = frames.filter((frame) => frame.status === "approved").length +
-    transitions.filter((transition) => transition.videoStatus === "approved").length;
+  const visibleFrames = frames;
 
   useEffect(() => {
     const video = movieVideoRef.current;
@@ -1369,64 +1438,35 @@ export function MovieCreatorApp({
       .catch(() => {});
   }
 
+  useEffect(() => {
+    if (!snapshot || snapshot.manifest.ui.viewMode === "sequence") {
+      return;
+    }
+
+    persistUiState({ viewMode: "sequence" });
+  }, [snapshot]);
+
+  function scrollEntryIntoView(kind: "frame" | "transition", id: string) {
+    requestAnimationFrame(() => {
+      const node = kind === "frame" ? frameCardRefs.current[id] : transitionCardRefs.current[id];
+      node?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }
+
   function selectFrame(frameId: string) {
-    const frame = frames.find((item) => item.id === frameId) ?? null;
     setSelectedFrameId(frameId);
     setSelectedTransitionId(null);
-    setFramePromptDraft(frame?.imagePrompt ?? "");
     setActiveEditor(null);
     persistUiState({ selectedFrameId: frameId, selectedTransitionId: null });
   }
 
-  function selectTransition(transitionId: string) {
+  function selectTransition(transitionId: string, options?: { editPrompt?: boolean }) {
     const transition = transitions.find((item) => item.id === transitionId) ?? null;
     setSelectedTransitionId(transitionId);
     setSelectedFrameId(null);
     setTransitionPromptDraft(transition?.transitionPrompt ?? "");
-    setActiveEditor(null);
+    setActiveEditor(options?.editPrompt ? "transitionPrompt" : null);
     persistUiState({ selectedTransitionId: transitionId, selectedFrameId: null });
-  }
-
-  function patchFrameLocally(frameId: string, patch: Partial<FrameView>) {
-    setSnapshot((current) => {
-      if (!current) {
-        return current;
-      }
-
-      return {
-        ...current,
-        frames: current.frames.map((frame) => (frame.id === frameId ? { ...frame, ...patch } : frame)),
-        manifest: {
-          ...current.manifest,
-          frames: current.manifest.frames.map((frame) => (frame.id === frameId ? { ...frame, ...patch } : frame)),
-        },
-      };
-    });
-  }
-
-  async function commitFramePrompt(frame: FrameView, value: string) {
-    setActiveEditor(null);
-    const normalizedValue = value;
-    if (normalizedValue === frame.imagePrompt) {
-      setFramePromptDraft(normalizedValue);
-      return;
-    }
-
-    const success = await mutate(
-      `/api/frames/${frame.id}`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imagePrompt: normalizedValue }),
-      },
-      "Frame updated",
-    );
-
-    if (!success) {
-      setFramePromptDraft(frame.imagePrompt);
-    } else {
-      setFramePromptDraft(normalizedValue);
-    }
   }
 
   async function commitTransitionPrompt(transition: TransitionView, value: string) {
@@ -1489,82 +1529,142 @@ export function MovieCreatorApp({
     }
   }
 
-  async function runFramePrimaryAction(frame: FrameView) {
-    selectFrame(frame.id);
+  function openGenerateFrameModal(frame: FrameView) {
+    const selectedGalleryTileId = getSelectedGalleryTileId(frame);
+    const draft = getFrameGenerationDraft(frame, selectedGalleryTileId);
+    setFrameGenerationTargetId(frame.id);
+    setFrameGenerationPromptDraft(draft.prompt);
+    setFrameGenerationUsePreviousDraft(draft.usePreviousFrameAsReference);
+    setSelectedGalleryTile("frame", frame.id, GALLERY_ADD_TILE_ID);
+  }
 
-    if (frame.nextAction === "generate") {
-      setSelectedGalleryTile("frame", frame.id, GALLERY_ADD_TILE_ID);
-      await mutate(`/api/frames/${frame.id}/generate`, { method: "POST" }, "Queued frame generation");
+  function closeGenerateFrameModal() {
+    setFrameGenerationTargetId(null);
+    setFrameGenerationPromptDraft("");
+    setFrameGenerationUsePreviousDraft(false);
+  }
+
+  async function generateSingleTransition(transition: TransitionView) {
+    setSelectedGalleryTile("transition", transition.id, GALLERY_ADD_TILE_ID);
+    await mutate(
+      "/api/transitions/bulk-generate",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transitionIds: [transition.id] }),
+      },
+      "Queued transition generation",
+    );
+  }
+
+  function runFramePrimaryAction(frame: FrameView) {
+    selectFrame(frame.id);
+    scrollEntryIntoView("frame", frame.id);
+
+    if (frame.nextAction === "write_prompt" || frame.nextAction === "generate" || frame.status === "error") {
+      openGenerateFrameModal(frame);
     }
   }
 
-  async function runTransitionPrimaryAction(transition: TransitionView) {
-    selectTransition(transition.id);
+  async function runTransitionPrimaryAction(transition: TransitionView, options?: { editPrompt?: boolean }) {
+    selectTransition(transition.id, options);
+    scrollEntryIntoView("transition", transition.id);
 
-    if (transition.nextAction === "write_prompt") {
+    if (options?.editPrompt || !transition.transitionPrompt.trim()) {
       return;
     }
 
     if (transition.nextAction === "generate") {
-      setSelectedGalleryTile("transition", transition.id, GALLERY_ADD_TILE_ID);
-      await mutate(
-        "/api/transitions/bulk-generate",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ transitionIds: [transition.id] }),
-        },
-        "Queued transition generation",
-      );
+      await generateSingleTransition(transition);
     }
   }
 
-  async function runNextRepair() {
-    const nextTarget = actionableQueue[0] ?? null;
-    if (!nextTarget) {
-      notifications.show({ color: "gray", message: "The repair queue is empty." });
+  async function runNextStep() {
+    if (nextStep.kind === "current_cut_ready") {
       return;
     }
 
-    if ("imagePrompt" in nextTarget) {
-      await runFramePrimaryAction(nextTarget);
+    if (nextStep.kind === "frame") {
+      const frame = frames.find((entry) => entry.id === nextStep.entryId);
+      if (frame) {
+        runFramePrimaryAction(frame);
+      }
       return;
     }
 
-    await runTransitionPrimaryAction(nextTarget);
+    const transition = transitions.find((entry) => entry.id === nextStep.entryId);
+    if (!transition) {
+      return;
+    }
+
+    if (nextStep.action === "write_prompt") {
+      await runTransitionPrimaryAction(transition, { editPrompt: true });
+      return;
+    }
+
+    await runTransitionPrimaryAction(transition);
   }
 
-  async function runAllReady() {
+  async function generateReady() {
     const framesNeedingGeneration = frames.filter((frame) => frame.nextAction === "generate");
     const transitionsReadyToGenerate = transitions.filter((transition) => transition.nextAction === "generate");
 
+    if (!framesNeedingGeneration.length && !transitionsReadyToGenerate.length) {
+      notifications.show({ color: "gray", message: "There is nothing ready to generate." });
+      return;
+    }
+
+    for (const frame of framesNeedingGeneration) {
+      setSelectedGalleryTile("frame", frame.id, GALLERY_ADD_TILE_ID);
+    }
+
+    for (const transition of transitionsReadyToGenerate) {
+      setSelectedGalleryTile("transition", transition.id, GALLERY_ADD_TILE_ID);
+    }
+
+    const requests: Promise<unknown>[] = [];
+
     if (framesNeedingGeneration.length) {
-      await mutate(
-        "/api/frames/bulk-generate",
-        {
+      requests.push(
+        requestJson<ProjectSnapshot>("/api/frames/bulk-generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ frameIds: framesNeedingGeneration.map((frame) => frame.id), candidateCount: 1 }),
-        },
-        "Queued frame generation",
+          body: JSON.stringify({
+            frameIds: framesNeedingGeneration.map((frame) => frame.id),
+            candidateCount: 1,
+          }),
+        }),
       );
-      return;
     }
 
     if (transitionsReadyToGenerate.length) {
-      await mutate(
-        "/api/transitions/bulk-generate",
-        {
+      requests.push(
+        requestJson<ProjectSnapshot>("/api/transitions/bulk-generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ transitionIds: transitionsReadyToGenerate.map((transition) => transition.id) }),
-        },
-        "Queued transition generation",
+          body: JSON.stringify({
+            transitionIds: transitionsReadyToGenerate.map((transition) => transition.id),
+          }),
+        }),
       );
+    }
+
+    const results = await Promise.allSettled(requests);
+    await refreshProject();
+
+    const errors = results
+      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result) => (result.reason instanceof Error ? result.reason.message : "Request failed"));
+
+    if (errors.length) {
+      notifications.show({ color: "red", message: errors.join(" ") });
       return;
     }
 
-    notifications.show({ color: "gray", message: "There are no ready items to batch." });
+    notifications.show({
+      color: "teal",
+      message: `Queued ${framesNeedingGeneration.length} frame${framesNeedingGeneration.length === 1 ? "" : "s"} and ${transitionsReadyToGenerate.length} transition${transitionsReadyToGenerate.length === 1 ? "" : "s"}.`,
+    });
   }
 
   async function createFramesFromBulkInput() {
@@ -1584,7 +1684,7 @@ export function MovieCreatorApp({
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows }),
+        body: JSON.stringify({ rows, insertAtIndex: bulkInsertIndex ?? frames.length }),
       },
       `Created ${rows.length} frames`,
     );
@@ -1592,6 +1692,63 @@ export function MovieCreatorApp({
     if (success) {
       setBulkInput("");
       setBulkModalOpen(false);
+      setBulkInsertIndex(null);
+    }
+  }
+
+  function openAddFramesModal(insertAtIndex: number) {
+    setBulkInsertIndex(insertAtIndex);
+    setBulkModalOpen(true);
+  }
+
+  function closeAddFramesModal() {
+    setBulkModalOpen(false);
+    setBulkInsertIndex(null);
+  }
+
+  function addFramesModalTitle() {
+    if (frames.length === 0) {
+      return "Add Frames";
+    }
+
+    if ((bulkInsertIndex ?? frames.length) <= 0) {
+      return "Add Frames Before Frame 1";
+    }
+
+    if ((bulkInsertIndex ?? frames.length) >= frames.length) {
+      return `Add Frames After Frame ${frames.length}`;
+    }
+
+    return `Add Frames Between Frame ${bulkInsertIndex} and Frame ${(bulkInsertIndex ?? 0) + 1}`;
+  }
+
+  async function submitFrameGeneration() {
+    const targetFrame = frames.find((frame) => frame.id === frameGenerationTargetId) ?? null;
+    if (!targetFrame) {
+      return;
+    }
+
+    const prompt = frameGenerationPromptDraft.trim();
+    if (!prompt) {
+      notifications.show({ color: "yellow", message: "Add a frame prompt first." });
+      return;
+    }
+
+    const success = await mutate(
+      `/api/frames/${targetFrame.id}/generate`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          usePreviousFrameAsReference: targetFrame.position === 0 ? false : frameGenerationUsePreviousDraft,
+        }),
+      },
+      "Queued frame generation",
+    );
+
+    if (success) {
+      closeGenerateFrameModal();
     }
   }
 
@@ -1602,6 +1759,15 @@ export function MovieCreatorApp({
 
     const boundedIndex = Math.max(0, Math.min(nextIndex, moviePlaylist.length - 1));
     setMovieCursor(boundedIndex);
+  }
+
+  function playAllTransitions() {
+    if (!moviePlaylist.length) {
+      return;
+    }
+
+    setMovieCursor(0);
+    setMoviePlaying(true);
   }
 
   function toggleMoviePlayback() {
@@ -1628,6 +1794,35 @@ export function MovieCreatorApp({
         setMoviePlaying(false);
       });
     }
+  }
+
+  function handleActiveMovieLoadedData() {
+    if (!movieIsPlaying) {
+      return;
+    }
+
+    const video = movieVideoRef.current;
+    if (video) {
+      void video.play().catch(() => {
+        setMoviePlaying(false);
+      });
+    }
+  }
+
+  function handleActiveMoviePause() {
+    const video = movieVideoRef.current;
+    if (video && !video.ended) {
+      setMoviePlaying(false);
+    }
+  }
+
+  function handleActiveMovieEnded() {
+    if (movieIndex < moviePlaylist.length - 1) {
+      setMovieCursor(movieIndex + 1);
+      return;
+    }
+
+    setMoviePlaying(false);
   }
 
   return (
@@ -1667,15 +1862,16 @@ export function MovieCreatorApp({
                     </Text>
                   </Box>
                   <Group gap="xs">
-                    <Button leftSection={<IconWand size={16} aria-hidden="true" />} onClick={() => void runNextRepair()}>
-                      Run Next Repair
+                    <Button leftSection={<IconWand size={16} aria-hidden="true" />} onClick={() => void generateReady()}>
+                      Generate
                     </Button>
                     <Button
                       variant="light"
-                      leftSection={<IconRefresh size={16} aria-hidden="true" />}
-                      onClick={() => void refreshProject()}
+                      leftSection={<IconPlayerPlay size={16} aria-hidden="true" />}
+                      onClick={playAllTransitions}
+                      disabled={!moviePlaylist.length}
                     >
-                      Refresh
+                      Play All
                     </Button>
                     <Menu withinPortal position="bottom-end">
                       <Menu.Target>
@@ -1689,25 +1885,9 @@ export function MovieCreatorApp({
                           Open Project…
                         </Menu.Item>
                         <Menu.Item
-                          leftSection={<IconPlus size={14} aria-hidden="true" />}
-                          onClick={() => setBulkModalOpen(true)}
-                        >
-                          Add Frames…
-                        </Menu.Item>
-                        <Menu.Item
-                          leftSection={<IconPlayerPlay size={14} aria-hidden="true" />}
-                          onClick={() => void runAllReady()}
-                        >
-                          Run All Ready
-                        </Menu.Item>
-                        <Menu.Item
                           leftSection={<IconArrowsShuffle size={14} aria-hidden="true" />}
                           onClick={() => {
-                            const nextValue = !reorderMode;
-                            setReorderMode(nextValue);
-                            if (nextValue && filter !== "all") {
-                              persistUiState({ filter: "all" });
-                            }
+                            setReorderMode(!reorderMode);
                           }}
                         >
                           {reorderMode ? "Exit Reorder Mode" : "Enter Reorder Mode"}
@@ -1719,211 +1899,37 @@ export function MovieCreatorApp({
               </Card>
 
               <Group gap="sm">
-                <Badge color={repairCount > 0 ? "orange" : "gray"} size="lg">
-                  {repairCount} Needs Repair
+                <Badge color="cyan" variant="light">
+                  Sequence Workspace
                 </Badge>
-                <Badge color="teal" size="lg">
-                  {stableCount} Stable
-                </Badge>
-                <SegmentedControl
-                  value={viewMode}
-                  onChange={(value) => {
-                    if (value !== "play") {
-                      movieVideoRef.current?.pause();
-                      setMoviePlaying(false);
-                    }
-                    if (value === "play") {
-                      setMovieCursor(0);
-                    }
-                    persistUiState({ viewMode: value });
-                  }}
-                  data={[
-                    { label: "Sequence", value: "sequence" },
-                    { label: "Play", value: "play" },
-                  ]}
-                />
-                {viewMode === "sequence" ? (
-                  <SegmentedControl
-                    value={filter}
-                    onChange={(value) => persistUiState({ filter: value })}
-                    data={[
-                      { label: "Needs Repair", value: "needsRepair" },
-                      { label: "All", value: "all" },
-                    ]}
-                  />
-                ) : null}
               </Group>
 
-              {viewMode === "play" ? (
-                <Card withBorder radius="xl" p="md">
-                  <Stack gap="md">
-                    <Group justify="space-between" align="flex-start">
-                      <Box style={{ minWidth: 0 }}>
-                        <Title order={4}>Play Mode</Title>
-                        <Text c="dimmed" size="sm">
-                          Plays each current transition in sequence as one continuous movie preview.
-                        </Text>
-                      </Box>
-                      <Group gap="xs">
-                        <Button
-                          leftSection={
-                            movieIsPlaying ? <IconPlayerPause size={16} aria-hidden="true" /> : <IconPlayerPlay size={16} aria-hidden="true" />
-                          }
-                          onClick={toggleMoviePlayback}
-                          disabled={!activeMovieClip}
-                        >
-                          {movieIsPlaying ? "Pause" : "Play Movie"}
-                        </Button>
-                        <Button
-                          variant="light"
-                          onClick={() => selectMovieClip(movieIndex - 1)}
-                          disabled={!moviePlaylist.length || movieIndex === 0}
-                        >
-                          Previous
-                        </Button>
-                        <Button
-                          variant="light"
-                          onClick={() => selectMovieClip(movieIndex + 1)}
-                          disabled={!moviePlaylist.length || movieIndex >= moviePlaylist.length - 1}
-                        >
-                          Next
-                        </Button>
-                      </Group>
-                    </Group>
+              <>
+                <SequenceOverview
+                  currentClipCount={overviewStats.currentClipCount}
+                  totalTransitionCount={overviewStats.totalTransitionCount}
+                  missingInputCount={overviewStats.missingInputCount}
+                  actionableGenerationCount={overviewStats.actionableGenerationCount}
+                  inProgressCount={overviewStats.inProgressCount}
+                  nextStepTitle={nextStep.title}
+                  nextStepDescription={nextStep.description}
+                  nextStepCtaLabel={nextStep.ctaLabel}
+                  activeMovieClip={activeMovieClip}
+                  movieIndex={movieIndex}
+                  moviePlaylist={moviePlaylist}
+                  movieIsPlaying={movieIsPlaying}
+                  missingMovieTransitions={missingMovieTransitions}
+                  movieVideoRef={movieVideoRef}
+                  onTogglePlayback={toggleMoviePlayback}
+                  onSelectMovieClip={selectMovieClip}
+                  onNextStep={() => void runNextStep()}
+                  onLoadedData={handleActiveMovieLoadedData}
+                  onPlay={() => setMoviePlaying(true)}
+                  onPause={handleActiveMoviePause}
+                  onEnded={handleActiveMovieEnded}
+                />
 
-                    <Group gap="sm">
-                      <Badge color={missingMovieTransitions.length > 0 ? "orange" : moviePlaylist.length ? "teal" : "gray"} size="lg">
-                        {moviePlaylist.length}/{transitions.length} current clips ready
-                      </Badge>
-                      <Text c="dimmed" size="sm">
-                        {missingMovieTransitions.length > 0
-                          ? `${missingMovieTransitions.length} transition${missingMovieTransitions.length === 1 ? "" : "s"} will be skipped until a current clip exists.`
-                          : moviePlaylist.length
-                            ? "The full current sequence is ready to play."
-                            : "Generate at least one current transition clip to start playback."}
-                      </Text>
-                    </Group>
-
-                    <Card withBorder radius="lg" p="xs" style={{ background: "rgba(255,255,255,0.02)" }}>
-                      {activeMovieClip ? (
-                        <Stack gap="xs">
-                          <Box
-                            style={{
-                              aspectRatio: "16 / 9",
-                              overflow: "hidden",
-                              borderRadius: 12,
-                              background: "rgba(255,255,255,0.04)",
-                            }}
-                          >
-                            <video
-                              key={activeMovieClip.clipId}
-                              ref={movieVideoRef}
-                              controls
-                              playsInline
-                              preload="auto"
-                              poster={activeMovieClip.posterSrc}
-                              src={activeMovieClip.src}
-                              style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
-                              onLoadedData={() => {
-                                if (movieIsPlaying) {
-                                  const video = movieVideoRef.current;
-                                  if (video) {
-                                    void video.play().catch(() => {
-                                      setMoviePlaying(false);
-                                    });
-                                  }
-                                }
-                              }}
-                              onPlay={() => setMoviePlaying(true)}
-                              onPause={() => {
-                                const video = movieVideoRef.current;
-                                if (video && !video.ended) {
-                                  setMoviePlaying(false);
-                                }
-                              }}
-                              onEnded={() => {
-                                if (movieIndex < moviePlaylist.length - 1) {
-                                  setMovieCursor(movieIndex + 1);
-                                  return;
-                                }
-
-                                setMoviePlaying(false);
-                              }}
-                            />
-                          </Box>
-                          <Group justify="space-between" align="flex-start">
-                            <Stack gap={2}>
-                              <Text fw={600}>{activeMovieClip.label}</Text>
-                              <Text c="dimmed" size="sm">
-                                Clip {movieIndex + 1} of {moviePlaylist.length} · {activeMovieClip.model}
-                              </Text>
-                            </Stack>
-                          </Group>
-                        </Stack>
-                      ) : (
-                        <Flex mih={300} align="center" justify="center">
-                          <Text c="dimmed" size="sm">
-                            No current transition clips are ready yet.
-                          </Text>
-                        </Flex>
-                      )}
-                    </Card>
-
-                    {moviePlaylist.length > 0 ? (
-                      <ScrollArea offsetScrollbars="x" scrollbarSize={8} type="scroll">
-                        <Group gap="sm" wrap="nowrap">
-                          {moviePlaylist.map((clip, index) => {
-                            const isSelected = index === movieIndex;
-
-                            return (
-                              <UnstyledButton
-                                key={clip.clipId}
-                                onClick={() => selectMovieClip(index)}
-                                style={{
-                                  display: "block",
-                                  minWidth: 220,
-                                  borderRadius: 16,
-                                  border: isSelected ? "1px solid rgba(94, 230, 176, 0.72)" : "1px solid rgba(255,255,255,0.08)",
-                                  background: isSelected ? "rgba(28, 84, 67, 0.3)" : "rgba(255,255,255,0.02)",
-                                  overflow: "hidden",
-                                }}
-                              >
-                                <Stack gap="xs" p="xs">
-                                  <Box
-                                    style={{
-                                      aspectRatio: "16 / 9",
-                                      overflow: "hidden",
-                                      borderRadius: 12,
-                                      background: "rgba(255,255,255,0.04)",
-                                    }}
-                                  >
-                                    <video
-                                      muted
-                                      playsInline
-                                      preload="metadata"
-                                      poster={clip.posterSrc}
-                                      src={clip.src}
-                                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                                    />
-                                  </Box>
-                                  <Text fw={600} size="sm" lineClamp={2}>
-                                    {clip.label}
-                                  </Text>
-                                  <Text c="dimmed" size="xs">
-                                    {clip.model}
-                                  </Text>
-                                </Stack>
-                              </UnstyledButton>
-                            );
-                          })}
-                        </Group>
-                      </ScrollArea>
-                    ) : null}
-                  </Stack>
-                </Card>
-              ) : (
-                <>
-                  <DndContext
+                <DndContext
                     sensors={sensors}
                     collisionDetection={closestCenter}
                     onDragEnd={(event) => {
@@ -1955,118 +1961,112 @@ export function MovieCreatorApp({
                   >
                     <SortableContext items={frames.map((frame) => frame.id)} strategy={verticalListSortingStrategy}>
                       <Stack gap="sm">
+                        {frames.length === 0 ? (
+                          <AddFrameSeparator label="Add frames" onClick={() => openAddFramesModal(0)} />
+                        ) : null}
                         {(reorderMode ? frames : visibleFrames).map((frame) => {
                           const transition = transitionMap.get(frame.id) ?? null;
+                          const selectedFrameTileId = getSelectedGalleryTileId(frame);
                           return (
                             <Stack key={frame.id} gap="sm">
-                              <FrameQueueCard
-                                frame={frame}
-                                selected={selectedFrameId === frame.id}
-                                reorderMode={reorderMode}
-                                promptValue={
-                                  selectedFrameId === frame.id && activeEditor === "framePrompt"
-                                    ? framePromptDraft
-                                    : frame.imagePrompt
-                                }
-                                selectedGalleryTileId={getSelectedGalleryTileId(frame)}
-                                onSelect={() => selectFrame(frame.id)}
-                                onDelete={() => void deleteFrame(frame.id)}
-                                onZoom={setZoomTarget}
-                                onPromptChange={setFramePromptDraft}
-                                onPromptFocus={() => {
-                                  setFramePromptDraft(frame.imagePrompt);
-                                  setActiveEditor("framePrompt");
-                                }}
-                                onPromptCommit={(value) => void commitFramePrompt(frame, value)}
-                                onReferenceModeChange={(checked) => {
-                                  patchFrameLocally(frame.id, { usePreviousFrameAsReference: checked });
-                                  void mutate(
-                                    `/api/frames/${frame.id}`,
-                                    {
-                                      method: "PATCH",
-                                      headers: { "Content-Type": "application/json" },
-                                      body: JSON.stringify({ usePreviousFrameAsReference: checked }),
-                                    },
-                                    "Frame updated",
-                                  );
-                                }}
-                                onSelectGalleryAdd={() => setSelectedGalleryTile("frame", frame.id, GALLERY_ADD_TILE_ID)}
-                                onGenerateFromGallery={() => {
-                                  selectFrame(frame.id);
-                                  setSelectedGalleryTile("frame", frame.id, GALLERY_ADD_TILE_ID);
-                                  void mutate(
-                                    `/api/frames/${frame.id}/generate`,
-                                    { method: "POST" },
-                                    "Queued frame generation",
-                                  );
-                                }}
-                                onApproveVersion={(versionId) => {
-                                  void (async () => {
-                                    const success = await approveVersion("frame", versionId);
-                                    if (success) {
-                                      setSelectedGalleryTile("frame", frame.id, versionId);
-                                    }
-                                  })();
-                                }}
+                              <AddFrameSeparator
+                                label={`Add frames before ${getFrameLabel(frame)}`}
+                                onClick={() => openAddFramesModal(frame.position)}
                               />
-
-                              {transition && shouldShowTransition(transition) ? (
-                                <TransitionQueueCard
-                                  transition={transition}
-                                  selected={selectedTransitionId === transition.id}
+                              <Stack gap="sm">
+                                <FrameQueueCard
+                                  frame={frame}
+                                  selected={selectedFrameId === frame.id}
                                   reorderMode={reorderMode}
-                                  promptValue={
-                                    selectedTransitionId === transition.id && activeEditor === "transitionPrompt"
-                                      ? transitionPromptDraft
-                                      : transition.transitionPrompt
-                                  }
-                                  selectedGalleryTileId={getSelectedGalleryTileId(transition)}
-                                  onSelect={() => selectTransition(transition.id)}
-                                  onDelete={() => void deleteTransition(transition.id)}
-                                  onMovePair={() => {
-                                    setSegmentMoveTarget(transition);
-                                    setSegmentIndex(transition.fromFrame.position + 1);
-                                  }}
+                                  selectedGalleryTileId={selectedFrameTileId}
+                                  onSelect={() => selectFrame(frame.id)}
+                                  onDelete={() => void deleteFrame(frame.id)}
                                   onZoom={setZoomTarget}
-                                  onPromptChange={setTransitionPromptDraft}
-                                  onPromptFocus={() => {
-                                    setTransitionPromptDraft(transition.transitionPrompt);
-                                    setActiveEditor("transitionPrompt");
+                                  onPrimaryAction={() => runFramePrimaryAction(frame)}
+                                  cardRef={(node) => {
+                                    frameCardRefs.current[frame.id] = node;
                                   }}
-                                  onPromptCommit={(value) => void commitTransitionPrompt(transition, value)}
-                                  onGenerateFromGallery={() => {
-                                    selectTransition(transition.id);
-                                    setSelectedGalleryTile("transition", transition.id, GALLERY_ADD_TILE_ID);
-                                    void mutate(
-                                      "/api/transitions/bulk-generate",
-                                      {
-                                        method: "POST",
-                                        headers: { "Content-Type": "application/json" },
-                                        body: JSON.stringify({ transitionIds: [transition.id] }),
-                                      },
-                                      "Queued transition generation",
-                                    );
+                                  onSelectGalleryAdd={() => {
+                                    selectFrame(frame.id);
+                                    openGenerateFrameModal(frame);
                                   }}
                                   onApproveVersion={(versionId) => {
                                     void (async () => {
-                                      const success = await approveVersion("transition", versionId);
+                                      const success = await approveVersion("frame", versionId);
                                       if (success) {
-                                        setSelectedGalleryTile("transition", transition.id, versionId);
+                                        setSelectedGalleryTile("frame", frame.id, versionId);
                                       }
                                     })();
                                   }}
                                 />
-                              ) : null}
+
+                                {transition ? (
+                                  <TransitionQueueCard
+                                    transition={transition}
+                                    selected={selectedTransitionId === transition.id}
+                                    reorderMode={reorderMode}
+                                    promptValue={
+                                      selectedTransitionId === transition.id && activeEditor === "transitionPrompt"
+                                        ? transitionPromptDraft
+                                        : transition.transitionPrompt
+                                    }
+                                    selectedGalleryTileId={getSelectedGalleryTileId(transition)}
+                                    promptAutoFocus={
+                                      selectedTransitionId === transition.id && activeEditor === "transitionPrompt"
+                                    }
+                                    isPlaying={activeMovieClip?.transitionId === transition.id}
+                                    onSelect={() => selectTransition(transition.id)}
+                                    onDelete={() => void deleteTransition(transition.id)}
+                                    onMovePair={() => {
+                                      setSegmentMoveTarget(transition);
+                                      setSegmentIndex(transition.fromFrame.position + 1);
+                                    }}
+                                    onPrimaryAction={() => {
+                                      void runTransitionPrimaryAction(
+                                        transition,
+                                        !transition.transitionPrompt.trim() ? { editPrompt: true } : undefined,
+                                      );
+                                    }}
+                                    cardRef={(node) => {
+                                      transitionCardRefs.current[transition.id] = node;
+                                    }}
+                                    onPromptChange={setTransitionPromptDraft}
+                                    onPromptFocus={() => {
+                                      setTransitionPromptDraft(transition.transitionPrompt);
+                                      setActiveEditor("transitionPrompt");
+                                    }}
+                                    onPromptCommit={(value) => void commitTransitionPrompt(transition, value)}
+                                    onGenerateFromGallery={() => {
+                                      selectTransition(transition.id);
+                                      scrollEntryIntoView("transition", transition.id);
+                                      void generateSingleTransition(transition);
+                                    }}
+                                    onApproveVersion={(versionId) => {
+                                      void (async () => {
+                                        const success = await approveVersion("transition", versionId);
+                                        if (success) {
+                                          setSelectedGalleryTile("transition", transition.id, versionId);
+                                        }
+                                      })();
+                                    }}
+                                  />
+                                ) : null}
+                              </Stack>
                             </Stack>
                           );
                         })}
+                        {frames.length > 0 ? (
+                          <AddFrameSeparator
+                            label={`Add frames after ${getFrameLabel(frames[frames.length - 1]!)}`}
+                            onClick={() => openAddFramesModal(frames.length)}
+                          />
+                        ) : null}
                       </Stack>
                     </SortableContext>
-                  </DndContext>
+                </DndContext>
 
-                  {isPending ? <Text c="dimmed">Applying reorder…</Text> : null}
-                </>
-              )}
+                {isPending ? <Text c="dimmed">Applying reorder…</Text> : null}
+              </>
             </Stack>
           )}
         </ScrollArea>
@@ -2090,7 +2090,7 @@ export function MovieCreatorApp({
         </Stack>
       </Modal>
 
-      <Modal opened={bulkModalOpen} onClose={() => setBulkModalOpen(false)} title="Add Frames">
+      <Modal opened={bulkModalOpen} onClose={closeAddFramesModal} title={addFramesModalTitle()}>
         <Stack>
           <Textarea
             label="One Prompt Per Line"
@@ -2101,8 +2101,58 @@ export function MovieCreatorApp({
             name="bulk-frame-prompts"
             autoComplete="off"
           />
+          <Text c="dimmed" size="sm">
+            Frames with prompts start generating automatically in sequence as soon as the new chain can begin.
+          </Text>
           <Button leftSection={<IconSparkles size={16} aria-hidden="true" />} onClick={() => void createFramesFromBulkInput()}>
             Create Frames
+          </Button>
+        </Stack>
+      </Modal>
+
+      <Modal
+        opened={Boolean(frameGenerationTarget)}
+        onClose={closeGenerateFrameModal}
+        title={frameGenerationTarget ? `Generate ${getFrameLabel(frameGenerationTarget)}` : "Generate Frame"}
+      >
+        <Stack>
+          <Textarea
+            label="Prompt"
+            value={frameGenerationPromptDraft}
+            onChange={(event) => setFrameGenerationPromptDraft(event.currentTarget.value)}
+            minRows={6}
+            placeholder="Describe the frame you want to generate…"
+            name="frame-generation-prompt"
+            autoComplete="off"
+            autoFocus
+          />
+          {frameGenerationTarget && frameGenerationTarget.position > 0 ? (
+            <Switch
+              checked={frameGenerationUsePreviousDraft}
+              onChange={(event) => setFrameGenerationUsePreviousDraft(event.currentTarget.checked)}
+              label="Use Previous Frame As Reference"
+            />
+          ) : (
+            <Text c="dimmed" size="sm">
+              The first frame always generates without using a previous-frame reference.
+            </Text>
+          )}
+          {frameGenerationTarget?.disabledReason ? (
+            <Text c="dimmed" size="sm">
+              {frameGenerationTarget.disabledReason}
+            </Text>
+          ) : null}
+          <Button
+            leftSection={<IconSparkles size={16} aria-hidden="true" />}
+            onClick={() => void submitFrameGeneration()}
+            disabled={
+              !frameGenerationTarget ||
+              frameGenerationTarget.status === "blocked_upstream" ||
+              frameGenerationTarget.status === "queued" ||
+              frameGenerationTarget.status === "generating"
+            }
+          >
+            Generate Frame
           </Button>
         </Stack>
       </Modal>
