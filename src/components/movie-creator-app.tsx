@@ -44,7 +44,6 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   IconArrowsShuffle,
   IconChevronDown,
-  IconClockPlay,
   IconLayoutList,
   IconLayoutSidebarRightExpand,
   IconPlayerPlay,
@@ -77,6 +76,11 @@ type ReviewTarget =
   | { type: "transition"; transition: TransitionView }
   | null;
 
+type PromptEditorTarget =
+  | { type: "frame"; frame: FrameView }
+  | { type: "transition"; transition: TransitionView }
+  | null;
+
 type ZoomTarget = {
   src: string;
   alt: string;
@@ -84,7 +88,7 @@ type ZoomTarget = {
 };
 
 const columnHelper = createColumnHelper<FrameView>();
-const WORKSPACE_HEIGHT = "calc(100dvh - var(--app-shell-header-offset) - var(--app-shell-footer-offset) - 2 * var(--app-shell-padding))";
+const WORKSPACE_HEIGHT = "calc(100dvh - var(--app-shell-header-offset) - 2 * var(--app-shell-padding))";
 const DEFAULT_PROJECT_PATH =
   process.env.NEXT_PUBLIC_DEFAULT_PROJECT_PATH ?? "/Users/tsilva/Desktop/moviegen";
 
@@ -94,6 +98,34 @@ function assetUrl(relativePath: string | null | undefined) {
   }
 
   return `/api/assets?path=${encodeURIComponent(relativePath)}`;
+}
+
+function transitionCanGenerate(transition: TransitionView) {
+  return (
+    transition.promptStatus === "confirmed" &&
+    transition.videoStatus !== "queued" &&
+    transition.videoStatus !== "generating"
+  );
+}
+
+function transitionStatusColor(transition: TransitionView) {
+  if (transition.videoStatus === "approved") {
+    return "blue";
+  }
+
+  if (transition.videoStatus === "stale") {
+    return "yellow";
+  }
+
+  if (transition.videoStatus === "error") {
+    return "red";
+  }
+
+  if (transition.videoStatus === "queued" || transition.videoStatus === "generating") {
+    return "cyan";
+  }
+
+  return "gray";
 }
 
 async function requestJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
@@ -109,6 +141,7 @@ type FrameCardProps = {
   frame: FrameView;
   selected: boolean;
   onSelect: () => void;
+  onEditPrompt: () => void;
   onGenerate: () => void;
   onReview: () => void;
   onDelete: () => void;
@@ -194,7 +227,7 @@ function ZoomableThumb({ src, zoomSrc, alt, emptyLabel, sizes, width, onZoom }: 
   );
 }
 
-function FrameCard({ frame, selected, onSelect, onGenerate, onReview, onDelete, onZoom }: FrameCardProps) {
+function FrameCard({ frame, selected, onSelect, onEditPrompt, onGenerate, onReview, onDelete, onZoom }: FrameCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: frame.id,
   });
@@ -296,6 +329,16 @@ function FrameCard({ frame, selected, onSelect, onGenerate, onReview, onDelete, 
             <Group gap="xs">
               <Button
                 size="compact-sm"
+                variant="subtle"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onEditPrompt();
+                }}
+              >
+                Edit prompt
+              </Button>
+              <Button
+                size="compact-sm"
                 variant="light"
                 onClick={(event) => {
                   event.stopPropagation();
@@ -337,6 +380,7 @@ type TransitionCardProps = {
   transition: TransitionView;
   selected: boolean;
   onSelect: () => void;
+  onEditPrompt: () => void;
   onReview: () => void;
   onGenerate: () => void;
   onMovePair: () => void;
@@ -348,6 +392,7 @@ function TransitionCard({
   transition,
   selected,
   onSelect,
+  onEditPrompt,
   onReview,
   onGenerate,
   onMovePair,
@@ -356,6 +401,8 @@ function TransitionCard({
 }: TransitionCardProps) {
   const fromPreview = transition.fromFrame.approvedVersion ?? transition.fromFrame.latestVersion;
   const toPreview = transition.toFrame.approvedVersion ?? transition.toFrame.latestVersion;
+  const isGenerating =
+    transition.videoStatus === "queued" || transition.videoStatus === "generating";
 
   return (
     <Card
@@ -402,15 +449,7 @@ function TransitionCard({
               <Badge color={transition.promptStatus === "confirmed" ? "teal" : "yellow"}>
                 {transition.promptStatus}
               </Badge>
-              <Badge
-                color={
-                  transition.videoStatus === "approved"
-                    ? "blue"
-                    : transition.videoStatus === "stale"
-                      ? "yellow"
-                      : "gray"
-                }
-              >
+              <Badge color={transitionStatusColor(transition)}>
                 {transition.videoStatus}
               </Badge>
             </Group>
@@ -433,13 +472,24 @@ function TransitionCard({
             <Group gap="xs">
               <Button
                 size="compact-sm"
+                variant="subtle"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onEditPrompt();
+                }}
+              >
+                Edit prompt
+              </Button>
+              <Button
+                size="compact-sm"
                 variant="light"
                 onClick={(event) => {
                   event.stopPropagation();
                   onGenerate();
                 }}
+                disabled={!transitionCanGenerate(transition)}
               >
-                Generate
+                {isGenerating ? "Working..." : "Generate"}
               </Button>
               <Button
                 size="compact-sm"
@@ -489,18 +539,27 @@ function ReviewModal({ target, onClose, onApprove }: ReviewModalProps) {
           <Card key={version.id} withBorder radius="lg" p="md">
             <Stack gap="sm">
               <Box style={{ aspectRatio: "16 / 9", overflow: "hidden", borderRadius: 12 }}>
-                <Box style={{ position: "relative", width: "100%", height: "100%" }}>
-                  <Image
-                    src={
-                      assetUrl("thumbnailPath" in version ? version.thumbnailPath : version.posterPath) ?? undefined
-                    }
-                    alt=""
-                    fill
-                    unoptimized
-                    sizes="(max-width: 1024px) 100vw, 420px"
-                    style={{ objectFit: "cover", display: "block" }}
+                {"thumbnailPath" in version ? (
+                  <Box style={{ position: "relative", width: "100%", height: "100%" }}>
+                    <Image
+                      src={assetUrl(version.thumbnailPath)}
+                      alt=""
+                      fill
+                      unoptimized
+                      sizes="(max-width: 1024px) 100vw, 420px"
+                      style={{ objectFit: "cover", display: "block" }}
+                    />
+                  </Box>
+                ) : (
+                  <video
+                    controls
+                    playsInline
+                    preload="metadata"
+                    poster={assetUrl(version.posterPath) || undefined}
+                    src={assetUrl(version.outputPath)}
+                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
                   />
-                </Box>
+                )}
               </Box>
               <Group justify="space-between">
                 <Text size="sm">{version.model}</Text>
@@ -549,6 +608,59 @@ function ZoomModal({ target, onClose }: ZoomModalProps) {
           style={{ objectFit: "contain", display: "block" }}
         />
       </Box>
+    </Modal>
+  );
+}
+
+type PromptEditorModalProps = {
+  target: PromptEditorTarget;
+  draft: string;
+  onDraftChange: (value: string) => void;
+  onClose: () => void;
+  onSave: () => void;
+};
+
+function PromptEditorModal({
+  target,
+  draft,
+  onDraftChange,
+  onClose,
+  onSave,
+}: PromptEditorModalProps) {
+  if (!target) {
+    return null;
+  }
+
+  const title =
+    target.type === "frame"
+      ? target.frame.title || `Frame ${target.frame.position + 1}`
+      : `${target.transition.fromFrame.title || "Untitled"} to ${target.transition.toFrame.title || "Untitled"}`;
+
+  return (
+    <Modal
+      opened
+      onClose={onClose}
+      size="lg"
+      title={target.type === "frame" ? "Edit frame prompt" : "Edit transition prompt"}
+    >
+      <Stack gap="md">
+        <Text c="dimmed" size="sm">
+          {title}
+        </Text>
+        <Textarea
+          label={target.type === "frame" ? "Image prompt" : "Transition prompt"}
+          minRows={8}
+          autosize
+          value={draft}
+          onChange={(event) => onDraftChange(event.currentTarget.value)}
+        />
+        <Group justify="flex-end">
+          <Button variant="subtle" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={onSave}>Save prompt</Button>
+        </Group>
+      </Stack>
     </Modal>
   );
 }
@@ -609,7 +721,10 @@ export function MovieCreatorApp() {
   const [projectPath, setProjectPath] = useState("");
   const [bulkInput, setBulkInput] = useState("");
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget>(null);
+  const [promptEditorTarget, setPromptEditorTarget] = useState<PromptEditorTarget>(null);
+  const [promptDraft, setPromptDraft] = useState("");
   const [zoomTarget, setZoomTarget] = useState<ZoomTarget | null>(null);
+  const [inspectorTab, setInspectorTab] = useState<"frame" | "transition">("frame");
   const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
   const [selectedTransitionId, setSelectedTransitionId] = useState<string | null>(null);
   const [segmentMoveTarget, setSegmentMoveTarget] = useState<TransitionView | null>(null);
@@ -655,10 +770,22 @@ export function MovieCreatorApp() {
     transitions.find((transition) => transition.id === selectedTransitionId) ?? transitions[0] ?? null;
   const selectedFrameIsGenerating =
     selectedFrame?.status === "queued" || selectedFrame?.status === "generating";
+  const selectedTransitionIsGenerating =
+    selectedTransition?.videoStatus === "queued" || selectedTransition?.videoStatus === "generating";
+  const readyTransitionIds = transitions
+    .filter(
+      (transition) =>
+        transition.promptStatus === "confirmed" &&
+        transition.videoStatus !== "approved" &&
+        transition.videoStatus !== "queued" &&
+        transition.videoStatus !== "generating",
+    )
+    .map((transition) => transition.id);
 
   const frameColumns = useMemo(() => createFrameColumns((frame) => {
     setSelectedFrameId(frame.id);
     setSelectedTransitionId(null);
+    setInspectorTab("frame");
   }), []);
 
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -686,6 +813,7 @@ export function MovieCreatorApp() {
           : result.transitions[0]?.id ?? null;
       setSelectedFrameId(nextSelectedFrameId);
       setSelectedTransitionId(nextSelectedTransitionId);
+      setInspectorTab(nextSelectedFrameId ? "frame" : "transition");
       window.localStorage.setItem("moviegen:lastProjectPath", pathValue);
       notifications.show({ color: "teal", message: `Opened ${pathValue}` });
     } catch (error) {
@@ -706,8 +834,10 @@ export function MovieCreatorApp() {
       } else if (successMessage) {
         notifications.show({ color: "teal", message: successMessage });
       }
+      return true;
     } catch (error) {
       notifications.show({ color: "red", message: error instanceof Error ? error.message : "Request failed" });
+      return false;
     }
   }
 
@@ -762,13 +892,55 @@ export function MovieCreatorApp() {
     return true;
   });
 
+  function openPromptEditor(target: PromptEditorTarget) {
+    setPromptEditorTarget(target);
+    setPromptDraft(
+      target
+        ? target.type === "frame"
+          ? target.frame.imagePrompt
+          : target.transition.transitionPrompt
+        : "",
+    );
+  }
+
+  async function savePromptEditor() {
+    if (!promptEditorTarget) {
+      return;
+    }
+
+    const saved =
+      promptEditorTarget.type === "frame"
+        ? await mutate(
+            `/api/frames/${promptEditorTarget.frame.id}`,
+            {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ imagePrompt: promptDraft }),
+            },
+            "Frame updated",
+          )
+        : await mutate(
+            `/api/transitions/${promptEditorTarget.transition.id}`,
+            {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ transitionPrompt: promptDraft }),
+            },
+            "Transition updated",
+          );
+
+    if (saved) {
+      setPromptEditorTarget(null);
+      setPromptDraft("");
+    }
+  }
+
   return (
     <>
       <AppShell
         header={{ height: 68 }}
         navbar={{ width: 280, breakpoint: 0 }}
         aside={{ width: 360, breakpoint: 0, collapsed: { desktop: !(snapshot?.manifest.ui.inspectorOpen ?? true) } }}
-        footer={{ height: snapshot?.manifest.ui.jobsDrawerOpen ? 172 : 52 }}
         padding="md"
       >
         <AppShell.Header px="md">
@@ -893,31 +1065,26 @@ export function MovieCreatorApp() {
                 >
                   Generate all frames
                 </Button>
-                <Button
-                  leftSection={<IconPlayerPlay size={16} />}
-                  variant="light"
+	                <Button
+	                  leftSection={<IconPlayerPlay size={16} />}
+	                  variant="light"
                   onClick={() =>
                     void mutate(
                       "/api/transitions/bulk-generate",
                       {
                         method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          transitionIds: transitions
-                            .filter(
-                              (transition) =>
-                                transition.promptStatus === "confirmed" && transition.videoStatus !== "approved",
-                            )
-                            .map((transition) => transition.id),
-                        }),
-                      },
-                      "Queued transition generation",
-                    )
-                  }
-                  disabled={!transitions.length}
-                >
-                  Generate ready transitions
-                </Button>
+	                        headers: { "Content-Type": "application/json" },
+	                        body: JSON.stringify({
+	                          transitionIds: readyTransitionIds,
+	                        }),
+	                      },
+	                      "Queued transition generation",
+	                    )
+	                  }
+	                  disabled={!readyTransitionIds.length}
+	                >
+	                  Generate ready transitions
+	                </Button>
                 <Button variant="subtle" onClick={() => void refreshProject()}>
                   Refresh
                 </Button>
@@ -939,7 +1106,7 @@ export function MovieCreatorApp() {
               </ActionIcon>
             </Group>
 
-            <Tabs defaultValue={selectedFrame ? "frame" : "transition"} flex={1}>
+            <Tabs value={inspectorTab} onChange={(value) => setInspectorTab((value as "frame" | "transition") ?? "frame")} flex={1}>
               <Tabs.List>
                 <Tabs.Tab value="frame" leftSection={<IconLayoutList size={14} />}>
                   Frame
@@ -1063,17 +1230,42 @@ export function MovieCreatorApp() {
                   </Stack>
                 ) : (
                   <Text c="dimmed" size="sm">
-                    Select a frame to edit prompt and notes.
+                    Select a frame to edit title, prompt, and notes.
                   </Text>
                 )}
               </Tabs.Panel>
 
-              <Tabs.Panel value="transition" pt="md">
-                {selectedTransition ? (
-                  <Stack gap="sm">
-                    <Textarea
-                      label="Transition prompt"
-                      minRows={6}
+	              <Tabs.Panel value="transition" pt="md">
+	                {selectedTransition ? (
+	                  <Stack gap="sm">
+	                    {selectedTransition.approvedVideoVersion ?? selectedTransition.latestVideoVersion ? (
+	                      <Box
+	                        style={{
+	                          aspectRatio: "16 / 9",
+	                          overflow: "hidden",
+	                          borderRadius: 12,
+	                          background: "rgba(255,255,255,0.04)",
+	                        }}
+	                      >
+	                        <video
+	                          controls
+	                          playsInline
+	                          preload="metadata"
+	                          poster={assetUrl(
+	                            (selectedTransition.approvedVideoVersion ?? selectedTransition.latestVideoVersion)
+	                              ?.posterPath,
+	                          ) || undefined}
+	                          src={assetUrl(
+	                            (selectedTransition.approvedVideoVersion ?? selectedTransition.latestVideoVersion)
+	                              ?.outputPath,
+	                          )}
+	                          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+	                        />
+	                      </Box>
+	                    ) : null}
+	                    <Textarea
+	                      label="Transition prompt"
+	                      minRows={6}
                       value={selectedTransition.transitionPrompt}
                       onChange={(event) =>
                         setSnapshot((current) =>
@@ -1091,40 +1283,58 @@ export function MovieCreatorApp() {
                       }
                       onBlur={(event) =>
                         void mutate(
-                          `/api/transitions/${selectedTransition.id}/confirm-prompt`,
+                          `/api/transitions/${selectedTransition.id}`,
                           {
-                            method: "POST",
+                            method: "PATCH",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ prompt: event.currentTarget.value }),
+                            body: JSON.stringify({ transitionPrompt: event.currentTarget.value }),
                           },
-                          "Transition confirmed",
+                          "Transition updated",
                         )
                       }
                     />
-                    <Group>
-                      <Badge color={selectedTransition.promptStatus === "confirmed" ? "teal" : "yellow"}>
-                        {selectedTransition.promptStatus}
-                      </Badge>
-                      <Badge color={selectedTransition.videoStatus === "approved" ? "blue" : "gray"}>
-                        {selectedTransition.videoStatus}
-                      </Badge>
-                    </Group>
+	                    <Group>
+	                      <Badge color={selectedTransition.promptStatus === "confirmed" ? "teal" : "yellow"}>
+	                        {selectedTransition.promptStatus}
+	                      </Badge>
+	                      <Badge color={transitionStatusColor(selectedTransition)}>
+	                        {selectedTransition.videoStatus}
+	                      </Badge>
+	                    </Group>
                     <Group grow>
                       <Button
+                        variant="subtle"
                         onClick={() =>
                           void mutate(
+                            `/api/transitions/${selectedTransition.id}/confirm-prompt`,
+                            {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ prompt: selectedTransition.transitionPrompt }),
+                            },
+                            "Transition confirmed",
+                          )
+                        }
+                        disabled={!selectedTransition.transitionPrompt.trim() || selectedTransition.promptStatus === "blocked"}
+                      >
+                        Confirm prompt
+                      </Button>
+	                      <Button
+	                        onClick={() =>
+	                          void mutate(
                             "/api/transitions/bulk-generate",
                             {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
                               body: JSON.stringify({ transitionIds: [selectedTransition.id] }),
                             },
-                            "Queued transition generation",
-                          )
-                        }
-                      >
-                        Generate
-                      </Button>
+	                            "Queued transition generation",
+	                          )
+	                        }
+	                        disabled={!transitionCanGenerate(selectedTransition)}
+	                      >
+	                        {selectedTransitionIsGenerating ? "Generating…" : "Generate"}
+	                      </Button>
                       <Button variant="light" onClick={() => setReviewTarget({ type: "transition", transition: selectedTransition })}>
                         Review
                       </Button>
@@ -1140,58 +1350,13 @@ export function MovieCreatorApp() {
                   </Stack>
                 ) : (
                   <Text c="dimmed" size="sm">
-                    Select a transition to confirm prompt and review versions.
+                    Select a transition to edit and confirm the prompt before generating video.
                   </Text>
                 )}
               </Tabs.Panel>
             </Tabs>
           </Stack>
         </AppShell.Aside>
-
-        <AppShell.Footer p="md">
-          <Stack gap="sm" h="100%">
-            <Group justify="space-between">
-              <Group>
-                <IconClockPlay size={16} />
-                <Text fw={600}>Jobs</Text>
-              </Group>
-              <Button
-                variant="subtle"
-                size="compact-sm"
-                onClick={() => persistUiState({ jobsDrawerOpen: !(snapshot?.manifest.ui.jobsDrawerOpen ?? true) })}
-              >
-                {snapshot?.manifest.ui.jobsDrawerOpen ? "Collapse" : "Expand"}
-              </Button>
-            </Group>
-            {snapshot?.manifest.ui.jobsDrawerOpen ? (
-              <ScrollArea h={118}>
-                <Stack gap="xs">
-                  {(snapshot?.manifest.jobs ?? []).length ? (
-                    snapshot?.manifest.jobs
-                      .slice()
-                      .reverse()
-                      .map((job) => (
-                        <Card key={job.id} withBorder p="sm" radius="md">
-                          <Group justify="space-between">
-                            <Text size="sm">
-                              {job.kind} · {job.model}
-                            </Text>
-                            <Badge color={job.status === "completed" ? "teal" : job.status === "error" ? "red" : "blue"}>
-                              {job.status}
-                            </Badge>
-                          </Group>
-                        </Card>
-                      ))
-                  ) : (
-                    <Text c="dimmed" size="sm">
-                      No jobs yet.
-                    </Text>
-                  )}
-                </Stack>
-              </ScrollArea>
-            ) : null}
-          </Stack>
-        </AppShell.Footer>
 
         <AppShell.Main style={{ minHeight: 0, overflow: "hidden" }}>
           <ScrollArea
@@ -1272,7 +1437,14 @@ export function MovieCreatorApp() {
                               onSelect={() => {
                                 setSelectedFrameId(frame.id);
                                 setSelectedTransitionId(null);
+                                setInspectorTab("frame");
                                 persistUiState({ selectedFrameId: frame.id, selectedTransitionId: null });
+                              }}
+                              onEditPrompt={() => {
+                                setSelectedFrameId(frame.id);
+                                setSelectedTransitionId(null);
+                                setInspectorTab("frame");
+                                openPromptEditor({ type: "frame", frame });
                               }}
                               onGenerate={() =>
                                 void mutate(
@@ -1292,7 +1464,14 @@ export function MovieCreatorApp() {
                               onSelect={() => {
                                 setSelectedTransitionId(transition.id);
                                 setSelectedFrameId(null);
+                                setInspectorTab("transition");
                                 persistUiState({ selectedTransitionId: transition.id, selectedFrameId: null });
+                              }}
+                              onEditPrompt={() => {
+                                setSelectedTransitionId(transition.id);
+                                setSelectedFrameId(null);
+                                setInspectorTab("transition");
+                                openPromptEditor({ type: "transition", transition });
                               }}
                               onReview={() => setReviewTarget({ type: "transition", transition })}
                               onGenerate={() =>
@@ -1371,6 +1550,18 @@ export function MovieCreatorApp() {
 
           await mutate(url, { method: "POST" }, "Approved version");
           setReviewTarget(null);
+        }}
+      />
+      <PromptEditorModal
+        target={promptEditorTarget}
+        draft={promptDraft}
+        onDraftChange={setPromptDraft}
+        onClose={() => {
+          setPromptEditorTarget(null);
+          setPromptDraft("");
+        }}
+        onSave={() => {
+          void savePromptEditor();
         }}
       />
       <ZoomModal target={zoomTarget} onClose={() => setZoomTarget(null)} />
