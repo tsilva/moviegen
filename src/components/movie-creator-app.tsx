@@ -36,6 +36,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   IconArrowsShuffle,
+  IconChevronDown,
   IconDotsVertical,
   IconFolderOpen,
   IconPlayerPlay,
@@ -503,12 +504,16 @@ type FrameQueueCardProps = {
   frame: FrameView;
   selected: boolean;
   reorderMode: boolean;
+  promptValue: string;
+  detailsExpanded: boolean;
   onSelect: () => void;
   onPrimaryAction: () => void;
   onDelete: () => void;
   onZoom: (target: ZoomTarget) => void;
   onPromptChange: (value: string) => void;
+  onPromptFocus: () => void;
   onPromptCommit: (value: string) => void;
+  onToggleDetails: () => void;
   onReferenceModeChange: (checked: boolean) => void;
   onApproveVersion: (versionId: string) => void;
 };
@@ -517,12 +522,16 @@ function FrameQueueCard({
   frame,
   selected,
   reorderMode,
+  promptValue,
+  detailsExpanded,
   onSelect,
   onPrimaryAction,
   onDelete,
   onZoom,
   onPromptChange,
+  onPromptFocus,
   onPromptCommit,
+  onToggleDetails,
   onReferenceModeChange,
   onApproveVersion,
 }: FrameQueueCardProps) {
@@ -662,8 +671,9 @@ function FrameQueueCard({
               <Textarea
                 label="Image Prompt"
                 minRows={4}
-                value={frame.imagePrompt}
+                value={promptValue}
                 onChange={(event) => onPromptChange(event.currentTarget.value)}
+                onFocus={onPromptFocus}
                 onBlur={(event) => onPromptCommit(event.currentTarget.value)}
                 placeholder="Describe the frame…"
                 name={`frame-prompt-${frame.id}`}
@@ -671,23 +681,44 @@ function FrameQueueCard({
                 maxRows={10}
                 autoComplete="off"
               />
-              <Switch
-                checked={frame.usePreviousFrameAsReference}
-                onChange={(event) => onReferenceModeChange(event.currentTarget.checked)}
-                label="Use Previous Frame As Reference"
-              />
-              <Text c="dimmed" size="sm">
-                {frame.usePreviousFrameAsReference
-                  ? "This frame inherits continuity from the previous current frame output."
-                  : "This frame stands on its own and does not repair automatically from upstream changes."}
-              </Text>
-              <CandidateStrip
-                title={frame.nextAction === "review" ? "Review Current Candidates" : "Candidate History"}
-                versions={frame.versions}
-                approvedVersionId={frame.approvedVersionId}
-                kind="frame"
-                onApprove={onApproveVersion}
-              />
+              <Button
+                variant="subtle"
+                justify="space-between"
+                rightSection={
+                  <IconChevronDown
+                    size={16}
+                    aria-hidden="true"
+                    style={{ transform: detailsExpanded ? "rotate(180deg)" : undefined }}
+                  />
+                }
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onToggleDetails();
+                }}
+              >
+                {detailsExpanded ? "Hide details" : "Show details"}
+              </Button>
+              {detailsExpanded ? (
+                <Stack gap="md">
+                  <Switch
+                    checked={frame.usePreviousFrameAsReference}
+                    onChange={(event) => onReferenceModeChange(event.currentTarget.checked)}
+                    label="Use Previous Frame As Reference"
+                  />
+                  <Text c="dimmed" size="sm">
+                    {frame.usePreviousFrameAsReference
+                      ? "This frame inherits continuity from the previous current frame output."
+                      : "This frame stands on its own and does not repair automatically from upstream changes."}
+                  </Text>
+                  <CandidateStrip
+                    title={frame.nextAction === "review" ? "Review Current Candidates" : "Candidate History"}
+                    versions={frame.versions}
+                    approvedVersionId={frame.approvedVersionId}
+                    kind="frame"
+                    onApprove={onApproveVersion}
+                  />
+                </Stack>
+              ) : null}
             </Stack>
           </>
         ) : null}
@@ -700,13 +731,17 @@ type TransitionQueueCardProps = {
   transition: TransitionView;
   selected: boolean;
   reorderMode: boolean;
+  promptValue: string;
+  detailsExpanded: boolean;
   onSelect: () => void;
   onPrimaryAction: () => void;
   onDelete: () => void;
   onMovePair: () => void;
   onZoom: (target: ZoomTarget) => void;
   onPromptChange: (value: string) => void;
+  onPromptFocus: () => void;
   onPromptCommit: (value: string) => void;
+  onToggleDetails: () => void;
   onApproveVersion: (versionId: string) => void;
 };
 
@@ -714,13 +749,17 @@ function TransitionQueueCard({
   transition,
   selected,
   reorderMode,
+  promptValue,
+  detailsExpanded,
   onSelect,
   onPrimaryAction,
   onDelete,
   onMovePair,
   onZoom,
   onPromptChange,
+  onPromptFocus,
   onPromptCommit,
+  onToggleDetails,
   onApproveVersion,
 }: TransitionQueueCardProps) {
   const previewVideo = transition.approvedVideoVersion ?? transition.latestVideoVersion;
@@ -861,8 +900,9 @@ function TransitionQueueCard({
               <Textarea
                 label="Transition Prompt"
                 minRows={4}
-                value={transition.transitionPrompt}
+                value={promptValue}
                 onChange={(event) => onPromptChange(event.currentTarget.value)}
+                onFocus={onPromptFocus}
                 onBlur={(event) => onPromptCommit(event.currentTarget.value)}
                 placeholder="Describe the motion between these frames…"
                 name={`transition-prompt-${transition.id}`}
@@ -870,16 +910,37 @@ function TransitionQueueCard({
                 maxRows={10}
                 autoComplete="off"
               />
-              <Text c="dimmed" size="sm">
-                Transition generation always uses the latest current output from both adjacent frames.
-              </Text>
-              <CandidateStrip
-                title={transition.nextAction === "review" ? "Review Current Clips" : "Clip History"}
-                versions={transition.versions}
-                approvedVersionId={transition.approvedVideoVersionId}
-                kind="transition"
-                onApprove={onApproveVersion}
-              />
+              <Button
+                variant="subtle"
+                justify="space-between"
+                rightSection={
+                  <IconChevronDown
+                    size={16}
+                    aria-hidden="true"
+                    style={{ transform: detailsExpanded ? "rotate(180deg)" : undefined }}
+                  />
+                }
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onToggleDetails();
+                }}
+              >
+                {detailsExpanded ? "Hide details" : "Show details"}
+              </Button>
+              {detailsExpanded ? (
+                <Stack gap="md">
+                  <Text c="dimmed" size="sm">
+                    Transition generation always uses the latest current output from both adjacent frames.
+                  </Text>
+                  <CandidateStrip
+                    title={transition.nextAction === "review" ? "Review Current Clips" : "Clip History"}
+                    versions={transition.versions}
+                    approvedVersionId={transition.approvedVideoVersionId}
+                    kind="transition"
+                    onApprove={onApproveVersion}
+                  />
+                </Stack>
+              ) : null}
             </Stack>
           </>
         ) : null}
@@ -942,6 +1003,10 @@ export function MovieCreatorApp({
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [reorderMode, setReorderMode] = useState(false);
+  const [expandedDetails, setExpandedDetails] = useState<Record<string, boolean>>({});
+  const [activeEditor, setActiveEditor] = useState<null | "framePrompt" | "transitionPrompt">(null);
+  const [framePromptDraft, setFramePromptDraft] = useState("");
+  const [transitionPromptDraft, setTransitionPromptDraft] = useState("");
   const [isPending, startTransition] = useTransition();
   const previousSelectedFrameRef = useRef<{
     id: string | null;
@@ -972,6 +1037,13 @@ export function MovieCreatorApp({
       setProjectPath(result.projectPath);
       setSelectedFrameId(nextSelection.selectedFrameId);
       setSelectedTransitionId(nextSelection.selectedTransitionId);
+      setFramePromptDraft(
+        result.frames.find((frame) => frame.id === nextSelection.selectedFrameId)?.imagePrompt ?? "",
+      );
+      setTransitionPromptDraft(
+        result.transitions.find((transition) => transition.id === nextSelection.selectedTransitionId)?.transitionPrompt ?? "",
+      );
+      setActiveEditor(null);
       setProjectModalOpen(false);
       if (shouldNotify) {
         notifications.show({ color: "teal", message: `Opened ${result.projectPath}` });
@@ -1003,6 +1075,10 @@ export function MovieCreatorApp({
   }
 
   useEffect(() => {
+    if (activeEditor) {
+      return;
+    }
+
     const hasActiveJobs = snapshot?.manifest.jobs.some((job) => job.status === "queued" || job.status === "running");
     if (!hasActiveJobs) {
       return;
@@ -1015,7 +1091,7 @@ export function MovieCreatorApp({
     return () => {
       window.clearInterval(interval);
     };
-  }, [snapshot?.manifest.jobs]);
+  }, [activeEditor, snapshot?.manifest.jobs]);
 
   const frames = snapshot?.frames ?? [];
   const transitions = snapshot?.transitions ?? [];
@@ -1096,15 +1172,33 @@ export function MovieCreatorApp({
   }
 
   function selectFrame(frameId: string) {
+    const frame = frames.find((item) => item.id === frameId) ?? null;
     setSelectedFrameId(frameId);
     setSelectedTransitionId(null);
+    setFramePromptDraft(frame?.imagePrompt ?? "");
+    setActiveEditor(null);
     persistUiState({ selectedFrameId: frameId, selectedTransitionId: null });
   }
 
   function selectTransition(transitionId: string) {
+    const transition = transitions.find((item) => item.id === transitionId) ?? null;
     setSelectedTransitionId(transitionId);
     setSelectedFrameId(null);
+    setTransitionPromptDraft(transition?.transitionPrompt ?? "");
+    setActiveEditor(null);
     persistUiState({ selectedTransitionId: transitionId, selectedFrameId: null });
+  }
+
+  function detailsKey(kind: "frame" | "transition", id: string) {
+    return `${kind}:${id}`;
+  }
+
+  function toggleDetails(kind: "frame" | "transition", id: string) {
+    const key = detailsKey(kind, id);
+    setExpandedDetails((current) => ({
+      ...current,
+      [key]: !current[key],
+    }));
   }
 
   function patchFrameLocally(frameId: string, patch: Partial<FrameView>) {
@@ -1124,25 +1218,54 @@ export function MovieCreatorApp({
     });
   }
 
-  function patchTransitionLocally(transitionId: string, patch: Partial<TransitionView>) {
-    setSnapshot((current) => {
-      if (!current) {
-        return current;
-      }
+  async function commitFramePrompt(frame: FrameView, value: string) {
+    setActiveEditor(null);
+    const normalizedValue = value;
+    if (normalizedValue === frame.imagePrompt) {
+      setFramePromptDraft(normalizedValue);
+      return;
+    }
 
-      return {
-        ...current,
-        transitions: current.transitions.map((transition) =>
-          transition.id === transitionId ? { ...transition, ...patch } : transition,
-        ),
-        manifest: {
-          ...current.manifest,
-          transitions: current.manifest.transitions.map((transition) =>
-            transition.id === transitionId ? { ...transition, ...patch } : transition,
-          ),
-        },
-      };
-    });
+    const success = await mutate(
+      `/api/frames/${frame.id}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imagePrompt: normalizedValue }),
+      },
+      "Frame updated",
+    );
+
+    if (!success) {
+      setFramePromptDraft(frame.imagePrompt);
+    } else {
+      setFramePromptDraft(normalizedValue);
+    }
+  }
+
+  async function commitTransitionPrompt(transition: TransitionView, value: string) {
+    setActiveEditor(null);
+    const normalizedValue = value;
+    if (normalizedValue === transition.transitionPrompt) {
+      setTransitionPromptDraft(normalizedValue);
+      return;
+    }
+
+    const success = await mutate(
+      `/api/transitions/${transition.id}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transitionPrompt: normalizedValue }),
+      },
+      "Transition updated",
+    );
+
+    if (!success) {
+      setTransitionPromptDraft(transition.transitionPrompt);
+    } else {
+      setTransitionPromptDraft(normalizedValue);
+    }
   }
 
   async function approveVersion(kind: "frame" | "transition", versionId: string) {
@@ -1473,22 +1596,23 @@ export function MovieCreatorApp({
                             frame={frame}
                             selected={selectedFrameId === frame.id}
                             reorderMode={reorderMode}
+                            promptValue={
+                              selectedFrameId === frame.id && activeEditor === "framePrompt"
+                                ? framePromptDraft
+                                : frame.imagePrompt
+                            }
+                            detailsExpanded={expandedDetails[detailsKey("frame", frame.id)] ?? false}
                             onSelect={() => selectFrame(frame.id)}
                             onPrimaryAction={() => void runFramePrimaryAction(frame)}
                             onDelete={() => void deleteFrame(frame.id)}
                             onZoom={setZoomTarget}
-                            onPromptChange={(value) => patchFrameLocally(frame.id, { imagePrompt: value })}
-                            onPromptCommit={(value) =>
-                              void mutate(
-                                `/api/frames/${frame.id}`,
-                                {
-                                  method: "PATCH",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({ imagePrompt: value }),
-                                },
-                                "Frame updated",
-                              )
-                            }
+                            onPromptChange={setFramePromptDraft}
+                            onPromptFocus={() => {
+                              setFramePromptDraft(frame.imagePrompt);
+                              setActiveEditor("framePrompt");
+                            }}
+                            onPromptCommit={(value) => void commitFramePrompt(frame, value)}
+                            onToggleDetails={() => toggleDetails("frame", frame.id)}
                             onReferenceModeChange={(checked) => {
                               patchFrameLocally(frame.id, { usePreviousFrameAsReference: checked });
                               void mutate(
@@ -1509,6 +1633,12 @@ export function MovieCreatorApp({
                               transition={transition}
                               selected={selectedTransitionId === transition.id}
                               reorderMode={reorderMode}
+                              promptValue={
+                                selectedTransitionId === transition.id && activeEditor === "transitionPrompt"
+                                  ? transitionPromptDraft
+                                  : transition.transitionPrompt
+                              }
+                              detailsExpanded={expandedDetails[detailsKey("transition", transition.id)] ?? false}
                               onSelect={() => selectTransition(transition.id)}
                               onPrimaryAction={() => void runTransitionPrimaryAction(transition)}
                               onDelete={() => void deleteTransition(transition.id)}
@@ -1517,18 +1647,13 @@ export function MovieCreatorApp({
                                 setSegmentIndex(transition.fromFrame.position + 1);
                               }}
                               onZoom={setZoomTarget}
-                              onPromptChange={(value) => patchTransitionLocally(transition.id, { transitionPrompt: value })}
-                              onPromptCommit={(value) =>
-                                void mutate(
-                                  `/api/transitions/${transition.id}`,
-                                  {
-                                    method: "PATCH",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ transitionPrompt: value }),
-                                  },
-                                  "Transition updated",
-                                )
-                              }
+                              onPromptChange={setTransitionPromptDraft}
+                              onPromptFocus={() => {
+                                setTransitionPromptDraft(transition.transitionPrompt);
+                                setActiveEditor("transitionPrompt");
+                              }}
+                              onPromptCommit={(value) => void commitTransitionPrompt(transition, value)}
+                              onToggleDetails={() => toggleDetails("transition", transition.id)}
                               onApproveVersion={(versionId) => void approveVersion("transition", versionId)}
                             />
                           ) : null}

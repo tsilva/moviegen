@@ -141,9 +141,10 @@ describe("frame job anchoring", () => {
   });
 
   afterEach(async () => {
-    await Promise.all(tempDirs.splice(0).map((tempDir) => fs.rm(tempDir, { recursive: true, force: true })));
     delete (globalThis as Record<string, unknown>).__moviegenRuntimeState__;
     delete (globalThis as Record<string, unknown>).__moviegenJobRunnerState__;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await Promise.all(tempDirs.splice(0).map((tempDir) => fs.rm(tempDir, { recursive: true, force: true })));
   });
 
   test("uses explicit reference images when previous-frame anchoring is off", async () => {
