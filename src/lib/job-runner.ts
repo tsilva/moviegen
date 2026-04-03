@@ -3,11 +3,13 @@ import {
   VIDEO_MODEL,
   createId,
   deriveTransitionPromptStatus,
+  getApprovedFrameVersion,
+  getLatestFrameVersion,
   nowIso,
 } from "@/lib/project-ops";
 import { mutateCurrentProject, mutateProject, readProjectSnapshot } from "@/lib/project-store";
 import { generateFrameImages, generateTransitionVideo } from "@/lib/provider";
-import type { Frame, GenerationJob, ProjectSnapshot, Transition } from "@/lib/types";
+import type { Frame, GenerationJob, ProjectManifest, ProjectSnapshot, Transition } from "@/lib/types";
 
 type FrameGenerationOptions = {
   candidateCount: number;
@@ -25,6 +27,7 @@ type ClaimedFrameJob = {
   job: GenerationJob;
   frame: Frame;
   projectPath: string;
+  referenceImages: string[];
 };
 
 type ClaimedTransitionJob = {
@@ -60,6 +63,34 @@ function getJobRunnerState(): JobRunnerState {
   return global.__moviegenJobRunnerState__;
 }
 
+function resolveFrameReferenceImages(frame: Frame, manifest: ProjectManifest) {
+  if (!frame.usePreviousFrameAsReference) {
+    return frame.referenceImages;
+  }
+
+  const orderedFrames = [...manifest.frames].sort((left, right) => left.position - right.position);
+  const frameIndex = orderedFrames.findIndex((item) => item.id === frame.id);
+  if (frameIndex < 0) {
+    throw new Error("Frame not found");
+  }
+
+  if (frameIndex === 0) {
+    throw new Error("Previous-frame reference is unavailable for the first frame");
+  }
+
+  const previousFrame = orderedFrames[frameIndex - 1];
+  if (!previousFrame) {
+    throw new Error("Previous frame not found");
+  }
+
+  const previousVersion = getApprovedFrameVersion(previousFrame) ?? getLatestFrameVersion(previousFrame);
+  if (!previousVersion) {
+    throw new Error("Previous frame does not have a generated image to use as a reference");
+  }
+
+  return [previousVersion.outputPath];
+}
+
 async function claimNextQueuedFrameJob(projectPath: string): Promise<ClaimedFrameJob | null> {
   const { result } = await mutateProject(projectPath, (manifest) => {
     const job = manifest.jobs.find(
@@ -79,6 +110,20 @@ async function claimNextQueuedFrameJob(projectPath: string): Promise<ClaimedFram
       return null;
     }
 
+    let referenceImages: string[];
+    try {
+      referenceImages = resolveFrameReferenceImages(frame, manifest);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to resolve frame reference images";
+      const timestamp = nowIso();
+      job.status = "error";
+      job.errorMessage = message;
+      job.updatedAt = timestamp;
+      job.completedAt = timestamp;
+      return null;
+    }
+
     const startedAt = nowIso();
     job.status = "running";
     job.startedAt = startedAt;
@@ -88,6 +133,7 @@ async function claimNextQueuedFrameJob(projectPath: string): Promise<ClaimedFram
       job: structuredClone(job),
       frame: structuredClone(frame),
       projectPath,
+      referenceImages,
     };
   });
 
@@ -315,7 +361,7 @@ async function runQueuedFrameJobs(projectPath: string) {
           projectPath,
           frameId: claimed.frame.id,
           prompt: claimed.frame.imagePrompt,
-          referenceImages: claimed.frame.referenceImages,
+          referenceImages: claimed.referenceImages,
           candidateCount: 1,
           size: String(claimed.job.requestPayload.size ?? "1280x720"),
           seedMode: String(claimed.job.requestPayload.seedMode ?? "random"),
@@ -432,6 +478,7 @@ function buildQueuedFrameJobs(frame: Frame, options: FrameGenerationOptions): Ge
       requestPayload: {
         frameId: frame.id,
         prompt: frame.imagePrompt,
+        usePreviousFrameAsReference: frame.usePreviousFrameAsReference,
         size: options.size,
         seedMode: options.seedMode,
         seed,
@@ -517,7 +564,7 @@ export async function enqueueTransitionGeneration(
 
     for (const transition of transitions) {
       if (deriveTransitionPromptStatus(transition, frameMap) !== "confirmed") {
-        throw new Error("Transition prompt must be confirmed against approved endpoint frames");
+        throw new Error("Transition prompt must be confirmed against the current endpoint frame versions");
       }
 
       manifest.jobs.push(buildQueuedTransitionJob(transition, options));

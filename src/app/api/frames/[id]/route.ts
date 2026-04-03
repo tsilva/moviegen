@@ -6,6 +6,7 @@ import { reconcileTransitions } from "@/lib/project-ops";
 const requestSchema = z.object({
   title: z.string().optional(),
   imagePrompt: z.string().optional(),
+  usePreviousFrameAsReference: z.boolean().optional(),
   notes: z.string().optional(),
 });
 
@@ -28,6 +29,10 @@ export async function PATCH(
 
       if (body.imagePrompt !== undefined) {
         frame.imagePrompt = body.imagePrompt;
+      }
+
+      if (body.usePreviousFrameAsReference !== undefined) {
+        frame.usePreviousFrameAsReference = body.usePreviousFrameAsReference;
       }
 
       if (body.notes !== undefined) {

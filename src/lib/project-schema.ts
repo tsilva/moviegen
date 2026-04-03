@@ -22,6 +22,7 @@ export const frameSchema = z.object({
   title: z.string(),
   imagePrompt: z.string(),
   referenceImages: z.array(z.string()),
+  usePreviousFrameAsReference: z.boolean().default(false),
   notes: z.string(),
   approvedVersionId: z.string().nullable(),
   versions: z.array(frameVersionSchema),

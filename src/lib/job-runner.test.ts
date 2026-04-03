@@ -1,0 +1,297 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+
+const { generateFrameImagesMock } = vi.hoisted(() => ({
+  generateFrameImagesMock: vi.fn(),
+}));
+
+vi.mock("./provider", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./provider")>();
+  return {
+    ...actual,
+    generateFrameImages: generateFrameImagesMock,
+  };
+});
+
+import { createEmptyManifest, createId, nowIso, reorderFrames } from "./project-ops";
+import { enqueueFrameGeneration } from "./job-runner";
+import { readProjectSnapshot, saveManifest, setCurrentProjectPath } from "./project-store";
+import type { Frame, FrameVersion, ProjectManifest } from "./types";
+
+function createFrame(title: string, position: number): Frame {
+  const timestamp = nowIso();
+  return {
+    id: createId("frame"),
+    position,
+    title,
+    imagePrompt: `${title} prompt`,
+    referenceImages: [],
+    usePreviousFrameAsReference: false,
+    notes: "",
+    approvedVersionId: null,
+    versions: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
+
+function createFrameVersion(outputPath: string): FrameVersion {
+  const id = createId("framever");
+  return {
+    id,
+    model: "mock-model",
+    inputPayload: {},
+    outputPath,
+    thumbnailPath: outputPath,
+    generationJobId: createId("job"),
+    createdAt: nowIso(),
+    reviewerDecision: "unreviewed" as const,
+    reviewerNotes: "",
+  };
+}
+
+async function createTempProject() {
+  return fs.mkdtemp(path.join(os.tmpdir(), "moviegen-job-runner-"));
+}
+
+async function seedProject(projectPath: string, manifestFactory: () => ProjectManifest) {
+  const manifest = manifestFactory();
+  await saveManifest(projectPath, manifest);
+  setCurrentProjectPath(projectPath);
+  return manifest;
+}
+
+async function waitForFrameJobToSettle(projectPath: string) {
+  const deadline = Date.now() + 2_000;
+
+  while (Date.now() < deadline) {
+    const snapshot = await readProjectSnapshot(projectPath);
+    const hasActiveFrameJobs = snapshot.manifest.jobs.some(
+      (job) =>
+        job.kind === "frame_image" && (job.status === "queued" || job.status === "running"),
+    );
+
+    if (!hasActiveFrameJobs) {
+      return snapshot;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  throw new Error("Timed out waiting for frame job to settle");
+}
+
+describe("frame job anchoring", () => {
+  const tempDirs: string[] = [];
+
+  beforeEach(() => {
+    generateFrameImagesMock.mockReset();
+    generateFrameImagesMock.mockResolvedValue([
+      {
+        model: "mock-edit-model",
+        providerPredictionId: "pred_test",
+        relativePath: path.join("frames", "generated", "candidate.png"),
+        inputPayload: { model: "mock-edit-model" },
+      },
+    ]);
+  });
+
+  afterEach(async () => {
+    await Promise.all(tempDirs.splice(0).map((tempDir) => fs.rm(tempDir, { recursive: true, force: true })));
+    delete (globalThis as Record<string, unknown>).__moviegenRuntimeState__;
+    delete (globalThis as Record<string, unknown>).__moviegenJobRunnerState__;
+  });
+
+  test("uses explicit reference images when previous-frame anchoring is off", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    const secondReference = path.join("refs", "custom.png");
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const second = createFrame("Second", 1);
+      second.referenceImages = [secondReference];
+      draft.frames = [first, second];
+      return draft;
+    });
+
+    await enqueueFrameGeneration([manifest.frames[1]!.id], {
+      candidateCount: 1,
+      size: "1280x720",
+      seedMode: "random",
+    });
+
+    await waitForFrameJobToSettle(projectPath);
+
+    expect(generateFrameImagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceImages: [secondReference],
+      }),
+    );
+  });
+
+  test("uses the previous approved frame as the anchor reference", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    const approvedPath = path.join("frames", "first", "approved.png");
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const second = createFrame("Second", 1);
+      const approvedVersion = createFrameVersion(approvedPath);
+      const latestVersion = createFrameVersion(path.join("frames", "first", "latest.png"));
+      first.versions.push(approvedVersion, latestVersion);
+      first.approvedVersionId = approvedVersion.id;
+      second.referenceImages = [path.join("refs", "ignored.png")];
+      second.usePreviousFrameAsReference = true;
+      draft.frames = [first, second];
+      return draft;
+    });
+
+    await enqueueFrameGeneration([manifest.frames[1]!.id], {
+      candidateCount: 1,
+      size: "1280x720",
+      seedMode: "random",
+    });
+
+    await waitForFrameJobToSettle(projectPath);
+
+    expect(generateFrameImagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceImages: [approvedPath],
+      }),
+    );
+  });
+
+  test("falls back to the previous frame latest candidate when there is no approved version", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    const latestPath = path.join("frames", "first", "latest.png");
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const second = createFrame("Second", 1);
+      first.versions.push(createFrameVersion(latestPath));
+      second.usePreviousFrameAsReference = true;
+      draft.frames = [first, second];
+      return draft;
+    });
+
+    await enqueueFrameGeneration([manifest.frames[1]!.id], {
+      candidateCount: 1,
+      size: "1280x720",
+      seedMode: "random",
+    });
+
+    await waitForFrameJobToSettle(projectPath);
+
+    expect(generateFrameImagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceImages: [latestPath],
+      }),
+    );
+  });
+
+  test("errors when anchoring is enabled but the previous frame has no generated image", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const second = createFrame("Second", 1);
+      second.usePreviousFrameAsReference = true;
+      draft.frames = [first, second];
+      return draft;
+    });
+
+    await enqueueFrameGeneration([manifest.frames[1]!.id], {
+      candidateCount: 1,
+      size: "1280x720",
+      seedMode: "random",
+    });
+
+    const snapshot = await waitForFrameJobToSettle(projectPath);
+
+    expect(generateFrameImagesMock).not.toHaveBeenCalled();
+    expect(snapshot.manifest.jobs[0]?.status).toBe("error");
+    expect(snapshot.manifest.jobs[0]?.errorMessage).toMatch(/does not have a generated image/);
+  });
+
+  test("uses the current preceding frame after frames are reordered", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    const firstApprovedPath = path.join("frames", "first", "approved.png");
+    const secondApprovedPath = path.join("frames", "second", "approved.png");
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const second = createFrame("Second", 1);
+      const third = createFrame("Third", 2);
+      const firstApproved = createFrameVersion(firstApprovedPath);
+      const secondApproved = createFrameVersion(secondApprovedPath);
+      first.versions.push(firstApproved);
+      second.versions.push(secondApproved);
+      first.approvedVersionId = firstApproved.id;
+      second.approvedVersionId = secondApproved.id;
+      third.usePreviousFrameAsReference = true;
+      draft.frames = [first, second, third];
+      reorderFrames(draft, [second.id, first.id, third.id]);
+      return draft;
+    });
+
+    await enqueueFrameGeneration([manifest.frames.find((frame) => frame.title === "Third")!.id], {
+      candidateCount: 1,
+      size: "1280x720",
+      seedMode: "random",
+    });
+
+    await waitForFrameJobToSettle(projectPath);
+
+    expect(generateFrameImagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceImages: [firstApprovedPath],
+      }),
+    );
+  });
+
+  test("passes a single anchored reference image into frame generation", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    const approvedPath = path.join("frames", "first", "approved.png");
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const second = createFrame("Second", 1);
+      const approvedVersion = createFrameVersion(approvedPath);
+      first.versions.push(approvedVersion);
+      first.approvedVersionId = approvedVersion.id;
+      second.usePreviousFrameAsReference = true;
+      second.referenceImages = [path.join("refs", "a.png"), path.join("refs", "b.png")];
+      draft.frames = [first, second];
+      return draft;
+    });
+
+    await enqueueFrameGeneration([manifest.frames[1]!.id], {
+      candidateCount: 1,
+      size: "1280x720",
+      seedMode: "random",
+    });
+
+    await waitForFrameJobToSettle(projectPath);
+
+    expect(generateFrameImagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceImages: [approvedPath],
+      }),
+    );
+    expect(generateFrameImagesMock.mock.calls[0]?.[0].referenceImages).toHaveLength(1);
+  });
+});

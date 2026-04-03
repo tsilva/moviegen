@@ -29,6 +29,7 @@ export type Frame = {
   title: string;
   imagePrompt: string;
   referenceImages: string[];
+  usePreviousFrameAsReference: boolean;
   notes: string;
   approvedVersionId: string | null;
   versions: FrameVersion[];

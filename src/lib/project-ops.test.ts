@@ -10,9 +10,10 @@ import {
   reconcileTransitions,
   reorderFrames,
 } from "./project-ops";
+import type { Frame, FrameVersion } from "./types";
 import { deleteFrameFromProject, deleteTransitionFromProject } from "./delete-ops";
 
-function frame(title: string) {
+function frame(title: string): Frame {
   const timestamp = nowIso();
   return {
     id: createId("frame"),
@@ -20,11 +21,26 @@ function frame(title: string) {
     title,
     imagePrompt: `${title} prompt`,
     referenceImages: [],
+    usePreviousFrameAsReference: false,
     notes: "",
     approvedVersionId: null,
     versions: [],
     createdAt: timestamp,
     updatedAt: timestamp,
+  };
+}
+
+function frameVersion(id: string): FrameVersion {
+  return {
+    id,
+    model: "mock-model",
+    inputPayload: {},
+    outputPath: `frames/${id}.png`,
+    thumbnailPath: `frames/${id}.png`,
+    generationJobId: createId("job"),
+    createdAt: nowIso(),
+    reviewerDecision: "unreviewed" as const,
+    reviewerNotes: "",
   };
 }
 
@@ -64,6 +80,21 @@ describe("project transition reconciliation", () => {
     expect(
       manifest.transitions.filter((transition) => transition.sequenceScope === "archived").length,
     ).toBeGreaterThanOrEqual(1);
+  });
+
+  test("transitions become confirmable when adjacent frames have generated versions but no approvals", () => {
+    const manifest = createEmptyManifest("test");
+    const first = frame("A");
+    const second = frame("B");
+    first.versions.push(frameVersion("framever_a"));
+    second.versions.push(frameVersion("framever_b"));
+    manifest.frames = [first, second].map((item, index) => ({ ...item, position: index }));
+
+    reconcileTransitions(manifest);
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+    expect(snapshot.transitions).toHaveLength(1);
+    expect(snapshot.transitions[0]?.promptStatus).toBe("missing");
   });
 
   test("deleting a frame archives frame and touching transition assets, then removes JSON entries", async () => {

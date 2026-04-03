@@ -18,6 +18,7 @@ import {
   SegmentedControl,
   SimpleGrid,
   Stack,
+  Switch,
   Tabs,
   Text,
   TextInput,
@@ -769,6 +770,7 @@ export function MovieCreatorApp() {
     transitions.find((transition) => transition.id === selectedTransitionId) ?? transitions[0] ?? null;
   const selectedFrameIsGenerating =
     selectedFrame?.status === "queued" || selectedFrame?.status === "generating";
+  const selectedFrameCanUsePreviousReference = (selectedFrame?.position ?? 0) > 0;
   const selectedTransitionIsGenerating =
     selectedTransition?.videoStatus === "queued" || selectedTransition?.videoStatus === "generating";
   const readyTransitionIds = transitions
@@ -1157,6 +1159,48 @@ export function MovieCreatorApp() {
                         )
                       }
                     />
+                    <Switch
+                      label="Use previous frame as reference"
+                      checked={selectedFrame.usePreviousFrameAsReference}
+                      disabled={!selectedFrameCanUsePreviousReference}
+                      onChange={(event) => {
+                        const checked = event.currentTarget.checked;
+                        setSnapshot((current) =>
+                          current
+                            ? {
+                                ...current,
+                                manifest: {
+                                  ...current.manifest,
+                                  frames: current.manifest.frames.map((frame) =>
+                                    frame.id === selectedFrame.id
+                                      ? { ...frame, usePreviousFrameAsReference: checked }
+                                      : frame,
+                                  ),
+                                },
+                                frames: current.frames.map((frame) =>
+                                  frame.id === selectedFrame.id
+                                    ? { ...frame, usePreviousFrameAsReference: checked }
+                                    : frame,
+                                ),
+                              }
+                            : current,
+                        );
+                        void mutate(
+                          `/api/frames/${selectedFrame.id}`,
+                          {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ usePreviousFrameAsReference: checked }),
+                          },
+                          "Frame updated",
+                        );
+                      }}
+                    />
+                    <Text c="dimmed" size="xs">
+                      {selectedFrameCanUsePreviousReference
+                        ? "When enabled, generation uses the previous frame's approved image, or its latest candidate if nothing is approved yet."
+                        : "The first frame has no previous frame to anchor to."}
+                    </Text>
                     <Group grow>
                       <Button
                         onClick={() =>

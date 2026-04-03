@@ -10,6 +10,7 @@ const requestSchema = z.object({
       imagePrompt: z.string().min(1),
       notes: z.string().optional(),
       referenceImages: z.array(z.string()).optional(),
+      usePreviousFrameAsReference: z.boolean().optional(),
     }),
   ),
 });
@@ -26,6 +27,7 @@ export async function POST(request: Request) {
           title: row.title ?? "",
           imagePrompt: row.imagePrompt,
           referenceImages: row.referenceImages ?? [],
+          usePreviousFrameAsReference: row.usePreviousFrameAsReference ?? false,
           notes: row.notes ?? "",
           approvedVersionId: null,
           versions: [],
