@@ -37,7 +37,6 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   IconArrowsShuffle,
-  IconChevronDown,
   IconDotsVertical,
   IconFolderOpen,
   IconPlayerPlay,
@@ -516,7 +515,6 @@ type FrameQueueCardProps = {
   selected: boolean;
   reorderMode: boolean;
   promptValue: string;
-  detailsExpanded: boolean;
   selectedGalleryTileId: string;
   onSelect: () => void;
   onDelete: () => void;
@@ -524,7 +522,6 @@ type FrameQueueCardProps = {
   onPromptChange: (value: string) => void;
   onPromptFocus: () => void;
   onPromptCommit: (value: string) => void;
-  onToggleDetails: () => void;
   onReferenceModeChange: (checked: boolean) => void;
   onSelectGalleryAdd: () => void;
   onGenerateFromGallery: () => void;
@@ -536,7 +533,6 @@ function FrameQueueCard({
   selected,
   reorderMode,
   promptValue,
-  detailsExpanded,
   selectedGalleryTileId,
   onSelect,
   onDelete,
@@ -544,7 +540,6 @@ function FrameQueueCard({
   onPromptChange,
   onPromptFocus,
   onPromptCommit,
-  onToggleDetails,
   onReferenceModeChange,
   onSelectGalleryAdd,
   onGenerateFromGallery,
@@ -673,91 +668,70 @@ function FrameQueueCard({
           <>
             <Divider color="rgba(255,255,255,0.08)" />
             <Stack gap="md" onClick={(event) => event.stopPropagation()}>
-              <Button
-                variant="subtle"
-                justify="space-between"
-                rightSection={
-                  <IconChevronDown
-                    size={16}
-                    aria-hidden="true"
-                    style={{ transform: detailsExpanded ? "rotate(180deg)" : undefined }}
-                  />
-                }
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onToggleDetails();
-                }}
-              >
-                {detailsExpanded ? "Hide details" : "Show details"}
-              </Button>
-              {detailsExpanded ? (
-                <Stack gap="md">
-                  <Textarea
-                    minRows={4}
-                    value={promptValue}
-                    onChange={(event) => onPromptChange(event.currentTarget.value)}
-                    onFocus={onPromptFocus}
-                    onBlur={(event) => onPromptCommit(event.currentTarget.value)}
-                    placeholder="Describe the frame…"
-                    name={`frame-prompt-${frame.id}`}
-                    autosize
-                    maxRows={10}
-                    autoComplete="off"
-                  />
-                  <Switch
-                    checked={frame.usePreviousFrameAsReference}
-                    onChange={(event) => onReferenceModeChange(event.currentTarget.checked)}
-                    label="Use Previous Frame As Reference"
-                  />
-                  <Text c="dimmed" size="sm">
-                    {frame.usePreviousFrameAsReference
-                      ? "This frame inherits continuity from the previous current frame output."
-                      : "This frame stands on its own and does not repair automatically from upstream changes."}
-                  </Text>
-                  <AssetGallery
-                    title="Asset Gallery"
-                    versions={frame.galleryVersions}
-                    selectedTileId={selectedGalleryTileId}
-                    pending={isPending}
-                    kind="frame"
-                    onSelectAdd={onSelectGalleryAdd}
-                    onSelectVersion={onApproveVersion}
-                  />
-                  {addTileSelected ? (
-                    <Card withBorder radius="lg" p="sm" style={{ background: "rgba(255,255,255,0.02)" }}>
-                      <Stack gap="xs">
-                        <Group justify="space-between" align="center">
-                          <Text fw={600} size="sm">
-                            {isPending ? "Generation In Progress" : "Generate New Frame"}
-                          </Text>
-                          {frame.disabledReason ? (
-                            <Badge color="gray" variant="light">
-                              Unavailable
-                            </Badge>
-                          ) : null}
-                        </Group>
-                        <Text c="dimmed" size="sm">
-                          {isPending
-                            ? "This slot will be replaced by the finished frame, then a fresh add tile will return to the gallery."
-                            : "Generate a fresh frame candidate for the current prompt and dependency state."}
-                        </Text>
-                        {!canGenerate && frame.disabledReason ? (
-                          <Text c="dimmed" size="sm">
-                            {frame.disabledReason}
-                          </Text>
-                        ) : null}
-                        <Button
-                          leftSection={<IconSparkles size={16} aria-hidden="true" />}
-                          onClick={onGenerateFromGallery}
-                          disabled={!canGenerate}
-                          loading={isPending}
-                        >
-                          Generate Frame
-                        </Button>
-                      </Stack>
-                    </Card>
-                  ) : null}
-                </Stack>
+              <Textarea
+                minRows={4}
+                value={promptValue}
+                onChange={(event) => onPromptChange(event.currentTarget.value)}
+                onFocus={onPromptFocus}
+                onBlur={(event) => onPromptCommit(event.currentTarget.value)}
+                placeholder="Describe the frame…"
+                name={`frame-prompt-${frame.id}`}
+                autosize
+                maxRows={10}
+                autoComplete="off"
+              />
+              <Switch
+                checked={frame.usePreviousFrameAsReference}
+                onChange={(event) => onReferenceModeChange(event.currentTarget.checked)}
+                label="Use Previous Frame As Reference"
+              />
+              <Text c="dimmed" size="sm">
+                {frame.usePreviousFrameAsReference
+                  ? "This frame inherits continuity from the previous current frame output."
+                  : "This frame stands on its own and does not repair automatically from upstream changes."}
+              </Text>
+              <AssetGallery
+                title="Asset Gallery"
+                versions={frame.galleryVersions}
+                selectedTileId={selectedGalleryTileId}
+                pending={isPending}
+                kind="frame"
+                onSelectAdd={onSelectGalleryAdd}
+                onSelectVersion={onApproveVersion}
+              />
+              {addTileSelected ? (
+                <Card withBorder radius="lg" p="sm" style={{ background: "rgba(255,255,255,0.02)" }}>
+                  <Stack gap="xs">
+                    <Group justify="space-between" align="center">
+                      <Text fw={600} size="sm">
+                        {isPending ? "Generation In Progress" : "Generate New Frame"}
+                      </Text>
+                      {frame.disabledReason ? (
+                        <Badge color="gray" variant="light">
+                          Unavailable
+                        </Badge>
+                      ) : null}
+                    </Group>
+                    <Text c="dimmed" size="sm">
+                      {isPending
+                        ? "This slot will be replaced by the finished frame, then a fresh add tile will return to the gallery."
+                        : "Generate a fresh frame candidate for the current prompt and dependency state."}
+                    </Text>
+                    {!canGenerate && frame.disabledReason ? (
+                      <Text c="dimmed" size="sm">
+                        {frame.disabledReason}
+                      </Text>
+                    ) : null}
+                    <Button
+                      leftSection={<IconSparkles size={16} aria-hidden="true" />}
+                      onClick={onGenerateFromGallery}
+                      disabled={!canGenerate}
+                      loading={isPending}
+                    >
+                      Generate Frame
+                    </Button>
+                  </Stack>
+                </Card>
               ) : null}
             </Stack>
           </>
@@ -772,7 +746,6 @@ type TransitionQueueCardProps = {
   selected: boolean;
   reorderMode: boolean;
   promptValue: string;
-  detailsExpanded: boolean;
   selectedGalleryTileId: string;
   onSelect: () => void;
   onDelete: () => void;
@@ -781,7 +754,6 @@ type TransitionQueueCardProps = {
   onPromptChange: (value: string) => void;
   onPromptFocus: () => void;
   onPromptCommit: (value: string) => void;
-  onToggleDetails: () => void;
   onSelectGalleryAdd: () => void;
   onGenerateFromGallery: () => void;
   onApproveVersion: (versionId: string) => void;
@@ -792,7 +764,6 @@ function TransitionQueueCard({
   selected,
   reorderMode,
   promptValue,
-  detailsExpanded,
   selectedGalleryTileId,
   onSelect,
   onDelete,
@@ -801,7 +772,6 @@ function TransitionQueueCard({
   onPromptChange,
   onPromptFocus,
   onPromptCommit,
-  onToggleDetails,
   onSelectGalleryAdd,
   onGenerateFromGallery,
   onApproveVersion,
@@ -939,81 +909,60 @@ function TransitionQueueCard({
           <>
             <Divider color="rgba(255,255,255,0.08)" />
             <Stack gap="md" onClick={(event) => event.stopPropagation()}>
-              <Button
-                variant="subtle"
-                justify="space-between"
-                rightSection={
-                  <IconChevronDown
-                    size={16}
-                    aria-hidden="true"
-                    style={{ transform: detailsExpanded ? "rotate(180deg)" : undefined }}
-                  />
-                }
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onToggleDetails();
-                }}
-              >
-                {detailsExpanded ? "Hide details" : "Show details"}
-              </Button>
-              {detailsExpanded ? (
-                <Stack gap="md">
-                  <Textarea
-                    minRows={4}
-                    value={promptValue}
-                    onChange={(event) => onPromptChange(event.currentTarget.value)}
-                    onFocus={onPromptFocus}
-                    onBlur={(event) => onPromptCommit(event.currentTarget.value)}
-                    placeholder="Describe the motion between these frames…"
-                    name={`transition-prompt-${transition.id}`}
-                    autosize
-                    maxRows={10}
-                    autoComplete="off"
-                  />
-                  <AssetGallery
-                    title="Clip Gallery"
-                    versions={transition.galleryVersions}
-                    selectedTileId={selectedGalleryTileId}
-                    pending={isPending}
-                    kind="transition"
-                    onSelectAdd={onSelectGalleryAdd}
-                    onSelectVersion={onApproveVersion}
-                  />
-                  {addTileSelected ? (
-                    <Card withBorder radius="lg" p="sm" style={{ background: "rgba(255,255,255,0.02)" }}>
-                      <Stack gap="xs">
-                        <Group justify="space-between" align="center">
-                          <Text fw={600} size="sm">
-                            {isPending ? "Generation In Progress" : "Generate New Clip"}
-                          </Text>
-                          {generateDisabledReason ? (
-                            <Badge color="gray" variant="light">
-                              Unavailable
-                            </Badge>
-                          ) : null}
-                        </Group>
-                        <Text c="dimmed" size="sm">
-                          {isPending
-                            ? "This slot will be replaced by the finished clip, then a fresh add tile will return to the gallery."
-                            : "Generate a fresh clip for the current prompt revision and current frame pair."}
-                        </Text>
-                        {generateDisabledReason ? (
-                          <Text c="dimmed" size="sm">
-                            {generateDisabledReason}
-                          </Text>
-                        ) : null}
-                        <Button
-                          leftSection={<IconPlayerPlay size={16} aria-hidden="true" />}
-                          onClick={onGenerateFromGallery}
-                          disabled={!canGenerate}
-                          loading={isPending}
-                        >
-                          Generate Clip
-                        </Button>
-                      </Stack>
-                    </Card>
-                  ) : null}
-                </Stack>
+              <Textarea
+                minRows={4}
+                value={promptValue}
+                onChange={(event) => onPromptChange(event.currentTarget.value)}
+                onFocus={onPromptFocus}
+                onBlur={(event) => onPromptCommit(event.currentTarget.value)}
+                placeholder="Describe the motion between these frames…"
+                name={`transition-prompt-${transition.id}`}
+                autosize
+                maxRows={10}
+                autoComplete="off"
+              />
+              <AssetGallery
+                title="Clip Gallery"
+                versions={transition.galleryVersions}
+                selectedTileId={selectedGalleryTileId}
+                pending={isPending}
+                kind="transition"
+                onSelectAdd={onSelectGalleryAdd}
+                onSelectVersion={onApproveVersion}
+              />
+              {addTileSelected ? (
+                <Card withBorder radius="lg" p="sm" style={{ background: "rgba(255,255,255,0.02)" }}>
+                  <Stack gap="xs">
+                    <Group justify="space-between" align="center">
+                      <Text fw={600} size="sm">
+                        {isPending ? "Generation In Progress" : "Generate New Clip"}
+                      </Text>
+                      {generateDisabledReason ? (
+                        <Badge color="gray" variant="light">
+                          Unavailable
+                        </Badge>
+                      ) : null}
+                    </Group>
+                    <Text c="dimmed" size="sm">
+                      {isPending
+                        ? "This slot will be replaced by the finished clip, then a fresh add tile will return to the gallery."
+                        : "Generate a fresh clip for the current prompt revision and current frame pair."}
+                    </Text>
+                    {generateDisabledReason ? (
+                      <Text c="dimmed" size="sm">
+                        {generateDisabledReason}
+                      </Text>
+                    ) : null}
+                    <Button
+                      leftSection={<IconPlayerPlay size={16} aria-hidden="true" />}
+                      onClick={onGenerateFromGallery}
+                      disabled={!canGenerate}
+                      loading={isPending}
+                    >
+                      Generate Clip
+                    </Button>
+                  </Stack>
+                </Card>
               ) : null}
             </Stack>
           </>
@@ -1077,7 +1026,6 @@ export function MovieCreatorApp({
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [reorderMode, setReorderMode] = useState(false);
-  const [expandedDetails, setExpandedDetails] = useState<Record<string, boolean>>({});
   const [activeEditor, setActiveEditor] = useState<null | "framePrompt" | "transitionPrompt">(null);
   const [framePromptDraft, setFramePromptDraft] = useState("");
   const [transitionPromptDraft, setTransitionPromptDraft] = useState("");
@@ -1362,26 +1310,6 @@ export function MovieCreatorApp({
     persistUiState({ selectedTransitionId: transitionId, selectedFrameId: null });
   }
 
-  function detailsKey(kind: "frame" | "transition", id: string) {
-    return `${kind}:${id}`;
-  }
-
-  function toggleDetails(kind: "frame" | "transition", id: string) {
-    const key = detailsKey(kind, id);
-    setExpandedDetails((current) => ({
-      ...current,
-      [key]: !current[key],
-    }));
-  }
-
-  function expandDetails(kind: "frame" | "transition", id: string) {
-    const key = detailsKey(kind, id);
-    setExpandedDetails((current) => ({
-      ...current,
-      [key]: true,
-    }));
-  }
-
   function patchFrameLocally(frameId: string, patch: Partial<FrameView>) {
     setSnapshot((current) => {
       if (!current) {
@@ -1497,7 +1425,6 @@ export function MovieCreatorApp({
     selectTransition(transition.id);
 
     if (transition.nextAction === "write_prompt") {
-      expandDetails("transition", transition.id);
       return;
     }
 
@@ -1741,7 +1668,6 @@ export function MovieCreatorApp({
                                 ? framePromptDraft
                                 : frame.imagePrompt
                             }
-                            detailsExpanded={expandedDetails[detailsKey("frame", frame.id)] ?? false}
                             selectedGalleryTileId={getSelectedGalleryTileId(frame)}
                             onSelect={() => selectFrame(frame.id)}
                             onDelete={() => void deleteFrame(frame.id)}
@@ -1752,7 +1678,6 @@ export function MovieCreatorApp({
                               setActiveEditor("framePrompt");
                             }}
                             onPromptCommit={(value) => void commitFramePrompt(frame, value)}
-                            onToggleDetails={() => toggleDetails("frame", frame.id)}
                             onReferenceModeChange={(checked) => {
                               patchFrameLocally(frame.id, { usePreviousFrameAsReference: checked });
                               void mutate(
@@ -1795,7 +1720,6 @@ export function MovieCreatorApp({
                                   ? transitionPromptDraft
                                   : transition.transitionPrompt
                               }
-                              detailsExpanded={expandedDetails[detailsKey("transition", transition.id)] ?? false}
                               selectedGalleryTileId={getSelectedGalleryTileId(transition)}
                               onSelect={() => selectTransition(transition.id)}
                               onDelete={() => void deleteTransition(transition.id)}
@@ -1810,7 +1734,6 @@ export function MovieCreatorApp({
                                 setActiveEditor("transitionPrompt");
                               }}
                               onPromptCommit={(value) => void commitTransitionPrompt(transition, value)}
-                              onToggleDetails={() => toggleDetails("transition", transition.id)}
                               onSelectGalleryAdd={() =>
                                 setSelectedGalleryTile("transition", transition.id, GALLERY_ADD_TILE_ID)
                               }
