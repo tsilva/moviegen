@@ -77,7 +77,7 @@ type ZoomTarget = {
   title: string;
 };
 const WORKSPACE_HEIGHT = "calc(100dvh - var(--app-shell-header-offset) - 2 * var(--app-shell-padding))";
-const DEFAULT_PROJECT_PATH =
+const PROJECT_PATH_PLACEHOLDER =
   process.env.NEXT_PUBLIC_DEFAULT_PROJECT_PATH ?? "/Users/tsilva/Desktop/moviegen";
 
 function assetUrl(relativePath: string | null | undefined) {
@@ -657,13 +657,7 @@ function ZoomModal({ target, onClose }: ZoomModalProps) {
 
 export function MovieCreatorApp() {
   const [snapshot, setSnapshot] = useState<ProjectSnapshot | null>(null);
-  const [projectPath, setProjectPath] = useState(() => {
-    if (typeof window === "undefined") {
-      return DEFAULT_PROJECT_PATH;
-    }
-
-    return window.localStorage.getItem("moviegen:lastProjectPath") || DEFAULT_PROJECT_PATH;
-  });
+  const [projectPath, setProjectPath] = useState("");
   const [bulkInput, setBulkInput] = useState("");
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget>(null);
   const [zoomTarget, setZoomTarget] = useState<ZoomTarget | null>(null);
@@ -678,19 +672,29 @@ export function MovieCreatorApp() {
     status: FrameView["status"] | null;
   }>({ id: null, status: null });
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
+  const normalizedProjectPath = projectPath.trim();
+  const hasProjectPath = normalizedProjectPath.length > 0;
 
   async function loadProject(pathValue: string) {
+    const nextProjectPath = pathValue.trim();
+
+    if (!nextProjectPath) {
+      notifications.show({ color: "yellow", message: "Enter a local project path first" });
+      return;
+    }
+
     try {
       const result = await requestJson<ProjectSnapshot>("/api/project/open", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectPath: pathValue, createIfMissing: true }),
+        body: JSON.stringify({ projectPath: nextProjectPath, createIfMissing: true }),
       });
       setSnapshot(result);
+      setProjectPath(result.projectPath);
       const nextSelectedFrameId =
         result.frames.some((frame) => frame.id === result.manifest.ui.selectedFrameId)
           ? result.manifest.ui.selectedFrameId
-          : result.frames[0]?.id ?? null;
+          : null;
       const nextSelectedTransitionId =
         result.transitions.some((transition) => transition.id === result.manifest.ui.selectedTransitionId)
           ? result.manifest.ui.selectedTransitionId
@@ -706,21 +710,17 @@ export function MovieCreatorApp() {
   }
 
   async function refreshProject() {
+    if (!snapshot) {
+      return;
+    }
+
     const result = await requestJson<ProjectSnapshot>("/api/project");
     setSnapshot(result);
   }
 
-  const loadProjectEffect = useEffectEvent((pathValue: string) => {
-    void loadProject(pathValue);
+  const refreshProjectEffect = useEffectEvent(() => {
+    void refreshProject();
   });
-
-  useEffect(() => {
-    if (!projectPath) {
-      return;
-    }
-
-    loadProjectEffect(projectPath);
-  }, [projectPath]);
 
   useEffect(() => {
     const hasActiveJobs = snapshot?.manifest.jobs.some(
@@ -732,7 +732,7 @@ export function MovieCreatorApp() {
     }
 
     const interval = window.setInterval(() => {
-      void refreshProject();
+      refreshProjectEffect();
     }, 1000);
 
     return () => {
@@ -748,6 +748,11 @@ export function MovieCreatorApp() {
   const selectedFrameCanUsePreviousReference = (selectedFrame?.position ?? 0) > 0;
 
   async function mutate<T extends ApiResult>(url: string, init: RequestInit, successMessage?: string) {
+    if (!snapshot) {
+      notifications.show({ color: "yellow", message: "Open a project first" });
+      return false;
+    }
+
     try {
       const result = await requestJson<T>(url, init);
       setSnapshot(result);
@@ -794,6 +799,10 @@ export function MovieCreatorApp() {
   }
 
   function persistUiState(update: Record<string, unknown>) {
+    if (!snapshot) {
+      return;
+    }
+
     void requestJson<ProjectSnapshot>("/api/project/ui", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -977,14 +986,23 @@ export function MovieCreatorApp() {
               <TextInput
                 value={projectPath}
                 onChange={(event) => setProjectPath(event.currentTarget.value)}
-                placeholder={DEFAULT_PROJECT_PATH}
+                placeholder={PROJECT_PATH_PLACEHOLDER}
                 w={360}
               />
-              <Button leftSection={<IconUpload size={16} />} onClick={() => void loadProject(projectPath)}>
+              <Button
+                leftSection={<IconUpload size={16} />}
+                onClick={() => void loadProject(projectPath)}
+                disabled={!hasProjectPath}
+              >
                 Open project
               </Button>
               <Tooltip label="Undo last mutation">
-                <ActionIcon variant="light" size="lg" onClick={() => void mutate("/api/commands/undo", { method: "POST" }, "Undo complete")}>
+                <ActionIcon
+                  variant="light"
+                  size="lg"
+                  onClick={() => void mutate("/api/commands/undo", { method: "POST" }, "Undo complete")}
+                  disabled={!snapshot}
+                >
                   <IconChevronDown size={16} style={{ transform: "rotate(90deg)" }} />
                 </ActionIcon>
               </Tooltip>
@@ -1409,16 +1427,12 @@ export function MovieCreatorApp() {
               <Flex h={WORKSPACE_HEIGHT} align="center" justify="center">
                 <Card withBorder radius="xl" p="xl" maw={560}>
                   <Stack gap="md">
-                    <Title order={2}>Open a local project directory</Title>
+                    <Title order={2}>Project path required</Title>
                     <Text c="dimmed">
-                      The app stores its manifest and generated media directly inside the chosen folder.
+                      {hasProjectPath
+                        ? "Open the project path from the top bar to load or create the workspace."
+                        : "Enter a local project path in the top bar to load or create the workspace."}
                     </Text>
-                    <TextInput
-                      value={projectPath}
-                      onChange={(event) => setProjectPath(event.currentTarget.value)}
-                      placeholder={DEFAULT_PROJECT_PATH}
-                    />
-                    <Button onClick={() => void loadProject(projectPath)}>Open or create project</Button>
                   </Stack>
                 </Card>
               </Flex>
