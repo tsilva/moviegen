@@ -40,8 +40,10 @@ import {
   IconPlayerPause,
   IconPlayerPlay,
   IconPlus,
+  IconPhoto,
   IconSparkles,
   IconTrash,
+  IconUpload,
   IconZoomIn,
 } from "@tabler/icons-react";
 import type {
@@ -59,6 +61,7 @@ import {
   getSequenceNextStep,
   getSequenceOverviewStats,
   getTransitionCardMeta,
+  getTransitionGenerationDraft,
   getTransitionLabel,
 } from "@/components/movie-creator-app.helpers";
 
@@ -86,6 +89,11 @@ type MovieCreatorAppProps = {
   initialProjectPath?: string;
 };
 
+type BulkFrameReferenceDraft = {
+  file: File;
+  id: string;
+};
+
 const DEFAULT_PROJECT_PATH = process.env.NEXT_PUBLIC_DEFAULT_PROJECT_PATH?.trim() ?? "";
 const PROJECT_PATH_PLACEHOLDER =
   process.env.NEXT_PUBLIC_DEFAULT_PROJECT_PATH ?? "/Users/tsilva/Desktop/moviegen";
@@ -99,69 +107,6 @@ function assetUrl(relativePath: string | null | undefined) {
   }
 
   return `/api/assets?path=${encodeURIComponent(relativePath)}`;
-}
-
-type InlinePromptInputProps = {
-  value: string;
-  placeholder: string;
-  name: string;
-  autoFocus?: boolean;
-  onChange: (value: string) => void;
-  onFocus: () => void;
-  onCommit: (value: string) => void;
-};
-
-function InlinePromptInput({
-  value,
-  placeholder,
-  name,
-  autoFocus = false,
-  onChange,
-  onFocus,
-  onCommit,
-}: InlinePromptInputProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (!autoFocus) {
-      return;
-    }
-
-    inputRef.current?.focus();
-  }, [autoFocus]);
-
-  return (
-    <TextInput
-      ref={inputRef}
-      value={value}
-      onChange={(event) => onChange(event.currentTarget.value)}
-      onFocus={onFocus}
-      onBlur={(event) => onCommit(event.currentTarget.value)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          event.currentTarget.blur();
-        }
-      }}
-      placeholder={placeholder}
-      name={name}
-      autoComplete="off"
-      variant="unstyled"
-      onClick={(event) => event.stopPropagation()}
-      styles={{
-        input: {
-          fontSize: "1rem",
-          fontWeight: 600,
-          lineHeight: 1.35,
-          color: "white",
-          padding: 0,
-          minHeight: "auto",
-          height: "auto",
-          textOverflow: "ellipsis",
-        },
-      }}
-    />
-  );
 }
 
 async function requestJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
@@ -608,16 +553,11 @@ type TransitionQueueCardProps = {
   transition: TransitionView;
   selected: boolean;
   reorderMode: boolean;
-  promptValue: string;
   selectedGalleryTileId: string;
-  promptAutoFocus: boolean;
   isPlaying: boolean;
   onSelect: () => void;
   onDelete: () => void;
   onMovePair: () => void;
-  onPromptChange: (value: string) => void;
-  onPromptFocus: () => void;
-  onPromptCommit: (value: string) => void;
   onGenerateFromGallery: () => void;
   onApproveVersion: (versionId: string) => void;
   onPrimaryAction: () => void;
@@ -628,16 +568,11 @@ function TransitionQueueCard({
   transition,
   selected,
   reorderMode,
-  promptValue,
   selectedGalleryTileId,
-  promptAutoFocus,
   isPlaying,
   onSelect,
   onDelete,
   onMovePair,
-  onPromptChange,
-  onPromptFocus,
-  onPromptCommit,
   onGenerateFromGallery,
   onApproveVersion,
   onPrimaryAction,
@@ -646,15 +581,10 @@ function TransitionQueueCard({
   const previewVideo = transition.currentVideo ?? transition.approvedVideoVersion ?? transition.latestVideoVersion;
   const isPending = transition.videoStatus === "queued" || transition.videoStatus === "generating";
   const meta = getTransitionCardMeta(transition, selectedGalleryTileId);
-  const canGenerate =
-    !isPending &&
-    transition.blockedByFrameIds.length === 0 &&
-    transition.transitionPrompt.trim().length > 0;
+  const canGenerate = !isPending && transition.blockedByFrameIds.length === 0;
   const generateDisabledReason = transition.blockedByFrameIds.length
     ? transition.disabledReason ?? "Waiting on adjacent frames."
-    : transition.transitionPrompt.trim()
-      ? null
-      : "Add a transition prompt before generating a clip.";
+    : null;
   const statusLabel = isPlaying ? "Playing" : meta.statusLabel;
   const statusColor = isPlaying ? "teal" : meta.statusColor;
   const summary = isPlaying ? "This clip is currently loaded in the preview player." : meta.summary;
@@ -755,21 +685,9 @@ function TransitionQueueCard({
             <Group justify="space-between" align="flex-start" wrap="nowrap">
               <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
                 <Text fw={700}>{meta.title}</Text>
-                {selected ? (
-                  <InlinePromptInput
-                    value={promptValue}
-                    onChange={onPromptChange}
-                    onFocus={onPromptFocus}
-                    onCommit={onPromptCommit}
-                    placeholder="No transition prompt yet"
-                    name={`transition-prompt-${transition.id}`}
-                    autoFocus={promptAutoFocus}
-                  />
-                ) : (
-                  <Text c={meta.promptPlaceholder ? "dimmed" : undefined} size="sm" lineClamp={2}>
-                    {meta.prompt}
-                  </Text>
-                )}
+                <Text c={meta.promptPlaceholder ? "dimmed" : undefined} size="sm" lineClamp={2}>
+                  {meta.prompt}
+                </Text>
               </Stack>
               {action ? (
                 <Button
@@ -1127,6 +1045,7 @@ export function MovieCreatorApp({
   const [snapshot, setSnapshot] = useState<ProjectSnapshot | null>(initialSnapshot);
   const [projectPath, setProjectPath] = useState(initialProjectPath);
   const [bulkInput, setBulkInput] = useState("");
+  const [bulkFrameReferences, setBulkFrameReferences] = useState<BulkFrameReferenceDraft[]>([]);
   const [zoomTarget, setZoomTarget] = useState<ZoomTarget | null>(null);
   const [selectedFrameId, setSelectedFrameId] = useState<string | null>(initialSelection.selectedFrameId);
   const [selectedTransitionId, setSelectedTransitionId] = useState<string | null>(
@@ -1140,9 +1059,9 @@ export function MovieCreatorApp({
   const [frameGenerationTargetId, setFrameGenerationTargetId] = useState<string | null>(null);
   const [frameGenerationPromptDraft, setFrameGenerationPromptDraft] = useState("");
   const [frameGenerationUsePreviousDraft, setFrameGenerationUsePreviousDraft] = useState(false);
+  const [transitionGenerationTargetId, setTransitionGenerationTargetId] = useState<string | null>(null);
+  const [transitionGenerationPromptDraft, setTransitionGenerationPromptDraft] = useState("");
   const [reorderMode, setReorderMode] = useState(false);
-  const [activeEditor, setActiveEditor] = useState<null | "transitionPrompt">(null);
-  const [transitionPromptDraft, setTransitionPromptDraft] = useState("");
   const [gallerySelection, setGallerySelection] = useState<Record<string, string>>({});
   const [movieCursor, setMovieCursor] = useState(0);
   const [moviePlaying, setMoviePlaying] = useState(false);
@@ -1151,8 +1070,19 @@ export function MovieCreatorApp({
   const movieVideoRef = useRef<HTMLVideoElement | null>(null);
   const frameCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const transitionCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const bulkFrameFileInputRef = useRef<HTMLInputElement | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
   const normalizedProjectPath = projectPath.trim();
+
+  function resetBulkFrameDrafts() {
+    setBulkInput("");
+    setBulkFrameReferences([]);
+    setBulkModalOpen(false);
+    setBulkInsertIndex(null);
+    if (bulkFrameFileInputRef.current) {
+      bulkFrameFileInputRef.current.value = "";
+    }
+  }
 
   function applyProjectSnapshot(result: ProjectSnapshot, options?: { notifyMessage?: string; closeProjectModal?: boolean }) {
     const nextSelection = getInitialSelection(result);
@@ -1165,16 +1095,12 @@ export function MovieCreatorApp({
     setMovieCursor(0);
     setMoviePlaying(false);
     movieVideoRef.current?.pause();
-    setBulkInput("");
-    setBulkModalOpen(false);
-    setBulkInsertIndex(null);
+    resetBulkFrameDrafts();
     setFrameGenerationTargetId(null);
     setFrameGenerationPromptDraft("");
     setFrameGenerationUsePreviousDraft(false);
-    setTransitionPromptDraft(
-      result.transitions.find((transition) => transition.id === nextSelection.selectedTransitionId)?.transitionPrompt ?? "",
-    );
-    setActiveEditor(null);
+    setTransitionGenerationTargetId(null);
+    setTransitionGenerationPromptDraft("");
 
     if (options?.closeProjectModal ?? true) {
       setProjectModalOpen(false);
@@ -1275,7 +1201,7 @@ export function MovieCreatorApp({
   }
 
   useEffect(() => {
-    if (activeEditor || frameGenerationTargetId) {
+    if (frameGenerationTargetId || transitionGenerationTargetId) {
       return;
     }
 
@@ -1291,7 +1217,7 @@ export function MovieCreatorApp({
     return () => {
       window.clearInterval(interval);
     };
-  }, [activeEditor, frameGenerationTargetId, snapshot?.manifest.jobs]);
+  }, [frameGenerationTargetId, transitionGenerationTargetId, snapshot?.manifest.jobs]);
 
   useEffect(() => {
     if (!snapshot) {
@@ -1376,6 +1302,8 @@ export function MovieCreatorApp({
   const frames = snapshot?.frames ?? [];
   const transitions = snapshot?.transitions ?? [];
   const frameGenerationTarget = frames.find((frame) => frame.id === frameGenerationTargetId) ?? null;
+  const transitionGenerationTarget =
+    transitions.find((transition) => transition.id === transitionGenerationTargetId) ?? null;
   const transitionMap = new Map(transitions.map((transition) => [transition.fromFrameId, transition]));
   const moviePlaylist: MoviePlaylistEntry[] = transitions.flatMap((transition) => {
     if (!transition.currentVideo) {
@@ -1467,42 +1395,13 @@ export function MovieCreatorApp({
   function selectFrame(frameId: string) {
     setSelectedFrameId(frameId);
     setSelectedTransitionId(null);
-    setActiveEditor(null);
     persistUiState({ selectedFrameId: frameId, selectedTransitionId: null });
   }
 
-  function selectTransition(transitionId: string, options?: { editPrompt?: boolean }) {
-    const transition = transitions.find((item) => item.id === transitionId) ?? null;
+  function selectTransition(transitionId: string) {
     setSelectedTransitionId(transitionId);
     setSelectedFrameId(null);
-    setTransitionPromptDraft(transition?.transitionPrompt ?? "");
-    setActiveEditor(options?.editPrompt ? "transitionPrompt" : null);
     persistUiState({ selectedTransitionId: transitionId, selectedFrameId: null });
-  }
-
-  async function commitTransitionPrompt(transition: TransitionView, value: string) {
-    setActiveEditor(null);
-    const normalizedValue = value;
-    if (normalizedValue === transition.transitionPrompt) {
-      setTransitionPromptDraft(normalizedValue);
-      return;
-    }
-
-    const success = await mutate(
-      `/api/transitions/${transition.id}`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transitionPrompt: normalizedValue }),
-      },
-      "Transition updated",
-    );
-
-    if (!success) {
-      setTransitionPromptDraft(transition.transitionPrompt);
-    } else {
-      setTransitionPromptDraft(normalizedValue);
-    }
   }
 
   async function approveVersion(kind: "frame" | "transition", versionId: string) {
@@ -1555,17 +1454,47 @@ export function MovieCreatorApp({
     setFrameGenerationUsePreviousDraft(false);
   }
 
-  async function generateSingleTransition(transition: TransitionView) {
+  function openGenerateTransitionModal(transition: TransitionView) {
+    const selectedGalleryTileId = getSelectedGalleryTileId(transition);
+    const draft = getTransitionGenerationDraft(transition, selectedGalleryTileId);
+    setTransitionGenerationTargetId(transition.id);
+    setTransitionGenerationPromptDraft(draft.prompt);
     setSelectedGalleryTile("transition", transition.id, GALLERY_ADD_TILE_ID);
-    await mutate(
+  }
+
+  function closeGenerateTransitionModal() {
+    setTransitionGenerationTargetId(null);
+    setTransitionGenerationPromptDraft("");
+  }
+
+  async function submitTransitionGeneration() {
+    const targetTransition = transitions.find((transition) => transition.id === transitionGenerationTargetId) ?? null;
+    if (!targetTransition) {
+      return;
+    }
+
+    const success = await mutate(
       "/api/transitions/bulk-generate",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transitionIds: [transition.id] }),
+        body: JSON.stringify({
+          transitionIds: [targetTransition.id],
+          promptsByTransitionId: {
+            [targetTransition.id]: transitionGenerationPromptDraft,
+          },
+        }),
       },
       "Queued transition generation",
     );
+
+    if (success) {
+      closeGenerateTransitionModal();
+    }
+  }
+
+  function generateSingleTransition(transition: TransitionView) {
+    openGenerateTransitionModal(transition);
   }
 
   function runFramePrimaryAction(frame: FrameView) {
@@ -1577,17 +1506,10 @@ export function MovieCreatorApp({
     }
   }
 
-  async function runTransitionPrimaryAction(transition: TransitionView, options?: { editPrompt?: boolean }) {
-    selectTransition(transition.id, options);
+  function runTransitionPrimaryAction(transition: TransitionView) {
+    selectTransition(transition.id);
     scrollEntryIntoView("transition", transition.id);
-
-    if (options?.editPrompt || !transition.transitionPrompt.trim()) {
-      return;
-    }
-
-    if (transition.nextAction === "generate") {
-      await generateSingleTransition(transition);
-    }
+    generateSingleTransition(transition);
   }
 
   async function runNextStep() {
@@ -1608,25 +1530,90 @@ export function MovieCreatorApp({
       return;
     }
 
-    if (nextStep.action === "write_prompt") {
-      await runTransitionPrimaryAction(transition, { editPrompt: true });
+    runTransitionPrimaryAction(transition);
+  }
+
+  function appendBulkFrameReferenceFiles(inputFiles: File[]) {
+    const acceptedFiles = inputFiles.filter((file) => file.type.startsWith("image/"));
+    if (!acceptedFiles.length) {
+      notifications.show({ color: "yellow", message: "Drop one or more image files." });
       return;
     }
 
-    await runTransitionPrimaryAction(transition);
+    setBulkFrameReferences((current) => {
+      const existingKeys = new Set(current.map((entry) => `${entry.file.name}:${entry.file.size}:${entry.file.lastModified}`));
+      const nextEntries = acceptedFiles
+        .filter((file) => !existingKeys.has(`${file.name}:${file.size}:${file.lastModified}`))
+        .map((file) => ({
+          file,
+          id: crypto.randomUUID(),
+        }));
+
+      if (!nextEntries.length) {
+        notifications.show({ color: "yellow", message: "Those images are already attached." });
+        return current;
+      }
+
+      return [...current, ...nextEntries];
+    });
+  }
+
+  function removeBulkFrameReference(id: string) {
+    setBulkFrameReferences((current) => current.filter((entry) => entry.id !== id));
+    if (bulkFrameFileInputRef.current) {
+      bulkFrameFileInputRef.current.value = "";
+    }
+  }
+
+  async function uploadBulkFrameReferences(files: File[]) {
+    const formData = new FormData();
+    for (const file of files) {
+      formData.append("files", file);
+    }
+
+    const result = await requestJson<{ paths: string[] }>("/api/uploads/frame-references", {
+      method: "POST",
+      body: formData,
+    });
+
+    return result.paths;
   }
 
   async function createFramesFromBulkInput() {
-    const rows = bulkInput
+    const promptRows = bulkInput
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean)
       .map((imagePrompt) => ({ imagePrompt }));
 
-    if (!rows.length) {
-      notifications.show({ color: "yellow", message: "Add at least one prompt." });
+    if (!promptRows.length && bulkFrameReferences.length === 0) {
+      notifications.show({ color: "yellow", message: "Add at least one prompt or image." });
       return;
     }
+
+    let imageRows: Array<{
+      imagePrompt: string;
+      referenceImages: string[];
+      usePreviousFrameAsReference: boolean;
+    }> = [];
+
+    if (bulkFrameReferences.length > 0) {
+      try {
+        const uploadedPaths = await uploadBulkFrameReferences(
+          bulkFrameReferences.map((entry) => entry.file),
+        );
+        imageRows = uploadedPaths.map((referencePath) => ({
+          imagePrompt: "",
+          referenceImages: [referencePath],
+          usePreviousFrameAsReference: false,
+        }));
+      } catch (error) {
+        notifications.show({ color: "red", message: error instanceof Error ? error.message : "Image upload failed" });
+        return;
+      }
+    }
+
+    const rows = [...promptRows, ...imageRows];
 
     const success = await mutate(
       "/api/frames/bulk-create",
@@ -1639,9 +1626,7 @@ export function MovieCreatorApp({
     );
 
     if (success) {
-      setBulkInput("");
-      setBulkModalOpen(false);
-      setBulkInsertIndex(null);
+      resetBulkFrameDrafts();
     }
   }
 
@@ -1651,8 +1636,7 @@ export function MovieCreatorApp({
   }
 
   function closeAddFramesModal() {
-    setBulkModalOpen(false);
-    setBulkInsertIndex(null);
+    resetBulkFrameDrafts();
   }
 
   function addFramesModalTitle() {
@@ -1913,15 +1897,7 @@ export function MovieCreatorApp({
                                     transition={transition}
                                     selected={selectedTransitionId === transition.id}
                                     reorderMode={reorderMode}
-                                    promptValue={
-                                      selectedTransitionId === transition.id && activeEditor === "transitionPrompt"
-                                        ? transitionPromptDraft
-                                        : transition.transitionPrompt
-                                    }
                                     selectedGalleryTileId={getSelectedGalleryTileId(transition)}
-                                    promptAutoFocus={
-                                      selectedTransitionId === transition.id && activeEditor === "transitionPrompt"
-                                    }
                                     isPlaying={activeMovieClip?.transitionId === transition.id}
                                     onSelect={() => selectTransition(transition.id)}
                                     onDelete={() => void deleteTransition(transition.id)}
@@ -1930,20 +1906,11 @@ export function MovieCreatorApp({
                                       setSegmentIndex(transition.fromFrame.position + 1);
                                     }}
                                     onPrimaryAction={() => {
-                                      void runTransitionPrimaryAction(
-                                        transition,
-                                        !transition.transitionPrompt.trim() ? { editPrompt: true } : undefined,
-                                      );
+                                      void runTransitionPrimaryAction(transition);
                                     }}
                                     cardRef={(node) => {
                                       transitionCardRefs.current[transition.id] = node;
                                     }}
-                                    onPromptChange={setTransitionPromptDraft}
-                                    onPromptFocus={() => {
-                                      setTransitionPromptDraft(transition.transitionPrompt);
-                                      setActiveEditor("transitionPrompt");
-                                    }}
-                                    onPromptCommit={(value) => void commitTransitionPrompt(transition, value)}
                                     onGenerateFromGallery={() => {
                                       selectTransition(transition.id);
                                       scrollEntryIntoView("transition", transition.id);
@@ -2035,8 +2002,78 @@ export function MovieCreatorApp({
             name="bulk-frame-prompts"
             autoComplete="off"
           />
+          <input
+            ref={bulkFrameFileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={(event) => appendBulkFrameReferenceFiles(Array.from(event.currentTarget.files ?? []))}
+          />
+          <Stack gap="xs">
+            <Text size="sm" fw={600}>
+              Or Drop Reference Images
+            </Text>
+            <Box
+              role="button"
+              tabIndex={0}
+              onClick={() => bulkFrameFileInputRef.current?.click()}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  bulkFrameFileInputRef.current?.click();
+                }
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                appendBulkFrameReferenceFiles(Array.from(event.dataTransfer.files));
+              }}
+              style={{
+                border: "1px dashed rgba(255,255,255,0.2)",
+                borderRadius: 16,
+                padding: "20px 16px",
+                cursor: "pointer",
+                background: "rgba(255,255,255,0.02)",
+              }}
+            >
+              <Stack gap={6} align="center">
+                <IconUpload size={20} aria-hidden="true" />
+                <Text size="sm" ta="center">
+                  Drag images here or click to choose files.
+                </Text>
+                <Text c="dimmed" size="xs" ta="center">
+                  Each image becomes a new frame with that image attached as a reference.
+                </Text>
+              </Stack>
+            </Box>
+            {bulkFrameReferences.length > 0 ? (
+              <Stack gap="xs">
+                {bulkFrameReferences.map((entry) => (
+                  <Group key={entry.id} justify="space-between" wrap="nowrap">
+                    <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+                      <IconPhoto size={16} aria-hidden="true" />
+                      <Text size="sm" lineClamp={1}>
+                        {entry.file.name}
+                      </Text>
+                    </Group>
+                    <ActionIcon
+                      variant="subtle"
+                      color="red"
+                      aria-label={`Remove ${entry.file.name}`}
+                      onClick={() => removeBulkFrameReference(entry.id)}
+                    >
+                      <IconTrash size={16} aria-hidden="true" />
+                    </ActionIcon>
+                  </Group>
+                ))}
+              </Stack>
+            ) : null}
+          </Stack>
           <Text c="dimmed" size="sm">
-            Frames with prompts start generating automatically in sequence as soon as the new chain can begin.
+            Prompt-based frames start generating automatically in sequence as soon as the new chain can begin. Image-based frames are added with their references attached and can be generated later.
           </Text>
           <Button leftSection={<IconSparkles size={16} aria-hidden="true" />} onClick={() => void createFramesFromBulkInput()}>
             Create Frames
@@ -2087,6 +2124,49 @@ export function MovieCreatorApp({
             }
           >
             Generate Frame
+          </Button>
+        </Stack>
+      </Modal>
+
+      <Modal
+        opened={Boolean(transitionGenerationTarget)}
+        onClose={closeGenerateTransitionModal}
+        title={
+          transitionGenerationTarget
+            ? `Generate ${getTransitionLabel(transitionGenerationTarget)}`
+            : "Generate Transition"
+        }
+      >
+        <Stack>
+          <Textarea
+            label="Prompt"
+            value={transitionGenerationPromptDraft}
+            onChange={(event) => setTransitionGenerationPromptDraft(event.currentTarget.value)}
+            minRows={6}
+            placeholder="Optional: describe the motion or style of the transition…"
+            name="transition-generation-prompt"
+            autoComplete="off"
+            autoFocus
+          />
+          <Text c="dimmed" size="sm">
+            Leave the prompt blank to generate the transition directly from the current frame pair.
+          </Text>
+          {transitionGenerationTarget?.disabledReason ? (
+            <Text c="dimmed" size="sm">
+              {transitionGenerationTarget.disabledReason}
+            </Text>
+          ) : null}
+          <Button
+            leftSection={<IconSparkles size={16} aria-hidden="true" />}
+            onClick={() => void submitTransitionGeneration()}
+            disabled={
+              !transitionGenerationTarget ||
+              transitionGenerationTarget.blockedByFrameIds.length > 0 ||
+              transitionGenerationTarget.videoStatus === "queued" ||
+              transitionGenerationTarget.videoStatus === "generating"
+            }
+          >
+            Generate Clip
           </Button>
         </Stack>
       </Modal>

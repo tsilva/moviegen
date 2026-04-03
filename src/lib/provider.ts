@@ -54,6 +54,8 @@ const DEFAULT_ATLAS_BASE_URL = "https://api.atlascloud.ai/api/v1";
 const DEFAULT_IMAGE_MODEL = "alibaba/wan-2.7-pro/image-edit";
 const DEFAULT_TEXT_TO_IMAGE_MODEL = "alibaba/wan-2.7-pro/text-to-image";
 const DEFAULT_VIDEO_MODEL = "bytedance/seedance-v1.5-pro/image-to-video";
+const DEFAULT_VIDEO_RESOLUTION = "720p";
+const DEFAULT_VIDEO_ASPECT_RATIO = "16:9";
 const POLL_INTERVAL_MS = 2_000;
 const POLL_TIMEOUT_MS = 120_000;
 
@@ -71,6 +73,18 @@ function getAtlasApiKey() {
 
 function getEditModel() {
   return process.env.WAN_IMAGE_MODEL ?? DEFAULT_IMAGE_MODEL;
+}
+
+function getVideoModel() {
+  return process.env.SEEDANCE_VIDEO_MODEL ?? DEFAULT_VIDEO_MODEL;
+}
+
+function getVideoResolution() {
+  return process.env.SEEDANCE_VIDEO_RESOLUTION ?? DEFAULT_VIDEO_RESOLUTION;
+}
+
+function getVideoAspectRatio() {
+  return process.env.SEEDANCE_VIDEO_ASPECT_RATIO ?? DEFAULT_VIDEO_ASPECT_RATIO;
 }
 
 function getTextToImageModel(editModel: string) {
@@ -385,13 +399,16 @@ export async function generateTransitionVideo(
     ensureRemoteReference(input.projectPath, input.toImagePath),
   ]);
   const { width, height } = parseGenerationSize(input.size);
+  const model = getVideoModel();
   const requestPayload: Record<string, unknown> = {
-    model: DEFAULT_VIDEO_MODEL,
+    model,
     prompt: input.prompt,
     image: fromImage,
     last_image: toImage,
     width,
     height,
+    resolution: getVideoResolution(),
+    aspect_ratio: getVideoAspectRatio(),
     duration: input.duration,
     fps: input.fps,
   };
@@ -427,7 +444,7 @@ export async function generateTransitionVideo(
   );
 
   return {
-    model: DEFAULT_VIDEO_MODEL,
+    model,
     providerPredictionId: predictionId,
     relativePath,
     posterRelativePath: input.posterPath,

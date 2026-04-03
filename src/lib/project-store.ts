@@ -90,16 +90,6 @@ async function withProjectLock<T>(projectPath: string, task: () => Promise<T> | 
   }
 }
 
-function discardActiveJobs(manifest: ProjectManifest) {
-  const nextJobs = manifest.jobs.filter((job) => job.status !== "queued" && job.status !== "running");
-  if (nextJobs.length === manifest.jobs.length) {
-    return false;
-  }
-
-  manifest.jobs = nextJobs;
-  return true;
-}
-
 export async function openProject(projectPathInput: string, createIfMissing = true): Promise<ProjectSnapshot> {
   const projectPath = path.resolve(projectPathInput);
   await ensureProjectDirectories(projectPath);
@@ -116,11 +106,6 @@ export async function openProject(projectPathInput: string, createIfMissing = tr
       return nextManifest;
     }
   });
-
-  const discardedActiveJobs = discardActiveJobs(manifest);
-  if (discardedActiveJobs) {
-    await saveManifest(projectPath, manifest);
-  }
 
   setCurrentProjectPath(projectPath);
   return buildProjectSnapshot(manifest, projectPath);

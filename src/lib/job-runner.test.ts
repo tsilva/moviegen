@@ -20,11 +20,17 @@ vi.mock("./provider", async (importOriginal) => {
 import {
   createEmptyManifest,
   createId,
+  IMAGE_MODEL,
   nowIso,
   reconcileTransitions,
   reorderFrames,
 } from "./project-ops";
-import { enqueueFrameGeneration, enqueueTransitionGeneration } from "./job-runner";
+import {
+  enqueueFrameGeneration,
+  enqueueProjectStartupGeneration,
+  enqueueTransitionGeneration,
+  resumeProjectJobs,
+} from "./job-runner";
 import { readProjectSnapshot, saveManifest, setCurrentProjectPath } from "./project-store";
 import type { Frame, FrameVersion, ProjectManifest } from "./types";
 
@@ -137,6 +143,21 @@ async function waitForJobToStart(
   }
 
   throw new Error(`Timed out waiting for ${kind} job to start`);
+}
+
+async function waitForAssertion(assertion: () => void) {
+  const deadline = Date.now() + 2_000;
+
+  while (Date.now() < deadline) {
+    try {
+      assertion();
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
+  assertion();
 }
 
 describe("frame job anchoring", () => {
@@ -505,6 +526,244 @@ describe("frame job anchoring", () => {
       }),
     );
     expect(snapshot.frames.every((frame) => frame.currentVersion != null)).toBe(true);
+  });
+
+  test("project startup generation overlaps transition 1-2 with frame 3 once frame 2 settles", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    let resolveFrame1: ((value: Awaited<ReturnType<typeof generateFrameImagesMock>>) => void) | null = null;
+    let resolveFrame2: ((value: Awaited<ReturnType<typeof generateFrameImagesMock>>) => void) | null = null;
+    let resolveFrame3: ((value: Awaited<ReturnType<typeof generateFrameImagesMock>>) => void) | null = null;
+    let resolveTransition1: ((value: Awaited<ReturnType<typeof generateTransitionVideoMock>>) => void) | null = null;
+    let resolveTransition2: ((value: Awaited<ReturnType<typeof generateTransitionVideoMock>>) => void) | null = null;
+
+    generateFrameImagesMock
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFrame1 = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFrame2 = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFrame3 = resolve;
+          }),
+      );
+    generateTransitionVideoMock
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveTransition1 = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveTransition2 = resolve;
+          }),
+      );
+
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const second = createFrame("Second", 1);
+      const third = createFrame("Third", 2);
+      first.usePreviousFrameAsReference = true;
+      second.usePreviousFrameAsReference = true;
+      third.usePreviousFrameAsReference = true;
+      draft.frames = [first, second, third];
+      reconcileTransitions(draft);
+      return draft;
+    });
+
+    await enqueueProjectStartupGeneration({
+      frameIds: manifest.frames.map((frame) => frame.id),
+      transitionIds: manifest.transitions.map((transition) => transition.id),
+      frameOptions: {
+        candidateCount: 1,
+        size: "1280x720",
+        seedMode: "random",
+      },
+      transitionOptions: {
+        duration: 4,
+        size: "1280x720",
+        fps: 24,
+      },
+    });
+
+    await waitForAssertion(() => {
+      expect(generateFrameImagesMock).toHaveBeenCalledTimes(1);
+      expect(generateTransitionVideoMock).toHaveBeenCalledTimes(0);
+    });
+
+    resolveFrame1?.([
+      {
+        model: "mock-edit-model",
+        providerPredictionId: "pred_frame_1",
+        relativePath: path.join("frames", "generated", "frame-1.png"),
+        inputPayload: { model: "mock-edit-model", step: 1 },
+      },
+    ]);
+
+    await waitForAssertion(() => {
+      expect(generateFrameImagesMock).toHaveBeenCalledTimes(2);
+      expect(generateTransitionVideoMock).toHaveBeenCalledTimes(0);
+    });
+
+    resolveFrame2?.([
+      {
+        model: "mock-edit-model",
+        providerPredictionId: "pred_frame_2",
+        relativePath: path.join("frames", "generated", "frame-2.png"),
+        inputPayload: { model: "mock-edit-model", step: 2 },
+      },
+    ]);
+
+    await waitForAssertion(() => {
+      expect(generateFrameImagesMock).toHaveBeenCalledTimes(3);
+      expect(generateTransitionVideoMock).toHaveBeenCalledTimes(1);
+    });
+
+    resolveFrame3?.([
+      {
+        model: "mock-edit-model",
+        providerPredictionId: "pred_frame_3",
+        relativePath: path.join("frames", "generated", "frame-3.png"),
+        inputPayload: { model: "mock-edit-model", step: 3 },
+      },
+    ]);
+
+    await waitForAssertion(() => {
+      expect(generateTransitionVideoMock).toHaveBeenCalledTimes(1);
+    });
+
+    resolveTransition1?.({
+      model: "mock-video-model",
+      providerPredictionId: "pred_transition_1",
+      relativePath: path.join("transitions", "generated", "clip-1.mp4"),
+      posterRelativePath: path.join("transitions", "generated", "poster-1.png"),
+      inputPayload: { model: "mock-video-model", step: 1 },
+    });
+
+    await waitForAssertion(() => {
+      expect(generateTransitionVideoMock).toHaveBeenCalledTimes(2);
+    });
+
+    resolveTransition2?.({
+      model: "mock-video-model",
+      providerPredictionId: "pred_transition_2",
+      relativePath: path.join("transitions", "generated", "clip-2.mp4"),
+      posterRelativePath: path.join("transitions", "generated", "poster-2.png"),
+      inputPayload: { model: "mock-video-model", step: 2 },
+    });
+
+    const frameSnapshot = await waitForFrameJobToSettle(projectPath);
+    const snapshot = await waitForTransitionJobToSettle(projectPath);
+
+    expect(frameSnapshot.frames.every((frame) => frame.currentVersion != null)).toBe(true);
+    expect(snapshot.transitions).toHaveLength(2);
+    expect(snapshot.transitions.every((transition) => transition.currentVideo != null)).toBe(true);
+  });
+
+  test("resumeProjectJobs requeues interrupted running frame work and completes the chain", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    generateFrameImagesMock
+      .mockResolvedValueOnce([
+        {
+          model: "mock-edit-model",
+          providerPredictionId: "pred_frame_resume_1",
+          relativePath: path.join("frames", "generated", "resume-1.png"),
+          inputPayload: { model: "mock-edit-model", step: 1 },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          model: "mock-edit-model",
+          providerPredictionId: "pred_frame_resume_2",
+          relativePath: path.join("frames", "generated", "resume-2.png"),
+          inputPayload: { model: "mock-edit-model", step: 2 },
+        },
+      ]);
+
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const second = createFrame("Second", 1);
+      second.usePreviousFrameAsReference = true;
+      draft.frames = [first, second];
+      draft.jobs.push(
+        {
+          id: createId("job"),
+          kind: "frame_image",
+          targetId: createId("framecand"),
+          targetParentId: first.id,
+          provider: "atlas",
+          model: IMAGE_MODEL,
+          status: "running",
+          requestPayload: {
+            frameId: first.id,
+            prompt: first.imagePrompt,
+            usePreviousFrameAsReference: false,
+            size: "1280x720",
+            seedMode: "random",
+            seed: 1,
+          },
+          providerPredictionId: null,
+          errorMessage: null,
+          startedAt: nowIso(),
+          completedAt: null,
+          createdAt: nowIso(),
+          updatedAt: nowIso(),
+        },
+        {
+          id: createId("job"),
+          kind: "frame_image",
+          targetId: createId("framecand"),
+          targetParentId: second.id,
+          provider: "atlas",
+          model: IMAGE_MODEL,
+          status: "queued",
+          requestPayload: {
+            frameId: second.id,
+            prompt: second.imagePrompt,
+            usePreviousFrameAsReference: true,
+            size: "1280x720",
+            seedMode: "random",
+            seed: 2,
+          },
+          providerPredictionId: null,
+          errorMessage: null,
+          startedAt: null,
+          completedAt: null,
+          createdAt: nowIso(),
+          updatedAt: nowIso(),
+        },
+      );
+      return draft;
+    });
+
+    const resumedSnapshot = await resumeProjectJobs(projectPath);
+
+    expect(["queued", "running"]).toContain(resumedSnapshot.manifest.jobs[0]?.status);
+
+    const snapshot = await waitForFrameJobToSettle(projectPath);
+
+    expect(generateFrameImagesMock).toHaveBeenCalledTimes(2);
+    expect(snapshot.frames[0]?.currentVersion?.outputPath).toBe(path.join("frames", "generated", "resume-1.png"));
+    expect(snapshot.frames[1]?.currentVersion?.outputPath).toBe(path.join("frames", "generated", "resume-2.png"));
+    expect(snapshot.manifest.jobs.map((job) => job.status)).toEqual(["completed", "completed"]);
+    expect(snapshot.manifest.frames[1]?.approvedVersionId).toBeTruthy();
+    expect(snapshot.manifest.frames[1]?.approvedVersionId).not.toBe(manifest.frames[1]?.approvedVersionId);
   });
 
   test("falls back to the previous frame latest candidate when there is no approved version", async () => {

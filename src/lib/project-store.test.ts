@@ -103,7 +103,7 @@ describe("project store concurrency", () => {
     expect(snapshot.manifest.frames.map((frame) => frame.position)).toEqual([0, 1]);
   });
 
-  test("opening a project discards persisted queued and running jobs", async () => {
+  test("opening a project preserves persisted queued and running jobs", async () => {
     const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "moviegen-project-store-"));
     tempDirs.push(projectPath);
 
@@ -121,12 +121,12 @@ describe("project store concurrency", () => {
 
     const snapshot = await openProject(projectPath, false);
 
-    expect(snapshot.manifest.jobs.map((job) => job.status)).toEqual(["completed", "error"]);
-    expect(snapshot.frames[0]?.status).toBe("draft");
+    expect(snapshot.manifest.jobs.map((job) => job.status)).toEqual(["queued", "running", "completed", "error"]);
+    expect(snapshot.frames[0]?.status).toBe("generating");
     expect(snapshot.frames[1]?.status).toBe("error");
 
     const reloadedSnapshot = await readProjectSnapshot(projectPath);
-    expect(reloadedSnapshot.manifest.jobs.map((job) => job.status)).toEqual(["completed", "error"]);
+    expect(reloadedSnapshot.manifest.jobs.map((job) => job.status)).toEqual(["queued", "running", "completed", "error"]);
   });
 
   test("clearing a project removes Moviegen-managed assets and recreates an empty manifest", async () => {

@@ -111,6 +111,8 @@ describe("provider transition generation", () => {
       last_image: "https://cdn.example/to.png",
       width: 1280,
       height: 720,
+      resolution: "720p",
+      aspect_ratio: "16:9",
       duration: 4,
       fps: 24,
     });
