@@ -1,5 +1,6 @@
 import type {
   Frame,
+  FrameNextAction,
   FrameStatus,
   FrameView,
   GenerationJob,
@@ -8,6 +9,7 @@ import type {
   ProjectSnapshot,
   ReorderImpactSummary,
   Transition,
+  TransitionNextAction,
   TransitionPromptStatus,
   TransitionVideoStatus,
   TransitionView,
@@ -65,6 +67,14 @@ export function getLatestFrameVersion(frame: Frame) {
   return frame.versions.at(-1) ?? null;
 }
 
+export function getTransitionEndpointVersion(frame: Frame) {
+  return getApprovedFrameVersion(frame) ?? getLatestFrameVersion(frame);
+}
+
+export function getTransitionEndpointVersionId(frame: Frame) {
+  return getTransitionEndpointVersion(frame)?.id ?? null;
+}
+
 export function getLatestTransitionVersion(transition: Transition) {
   return transition.versions.at(-1) ?? null;
 }
@@ -104,14 +114,36 @@ export function deriveFrameStatus(frame: Frame, jobs: GenerationJob[]): FrameSta
   return "generated_unreviewed";
 }
 
+export function deriveFrameNextAction(status: FrameStatus): FrameNextAction {
+  if (status === "draft" || status === "needs_regen" || status === "error") {
+    return "generate";
+  }
+
+  if (status === "generated_unreviewed") {
+    return "review";
+  }
+
+  return null;
+}
+
+export function deriveFrameDisabledReason(status: FrameStatus): string | null {
+  if (status === "queued" || status === "generating") {
+    return "Generation already in progress";
+  }
+
+  return null;
+}
+
 export function deriveTransitionPromptStatus(
   transition: Transition,
   frameMap: Map<string, Frame>,
 ): TransitionPromptStatus {
   const fromFrame = frameMap.get(transition.fromFrameId);
   const toFrame = frameMap.get(transition.toFrameId);
+  const fromEndpointVersionId = fromFrame ? getTransitionEndpointVersionId(fromFrame) : null;
+  const toEndpointVersionId = toFrame ? getTransitionEndpointVersionId(toFrame) : null;
 
-  if (!fromFrame || !toFrame || !fromFrame.approvedVersionId || !toFrame.approvedVersionId) {
+  if (!fromFrame || !toFrame || !fromEndpointVersionId || !toEndpointVersionId) {
     return "blocked";
   }
 
@@ -120,8 +152,8 @@ export function deriveTransitionPromptStatus(
   }
 
   if (
-    transition.confirmedFromVersionId !== fromFrame.approvedVersionId ||
-    transition.confirmedToVersionId !== toFrame.approvedVersionId
+    transition.confirmedFromVersionId !== fromEndpointVersionId ||
+    transition.confirmedToVersionId !== toEndpointVersionId
   ) {
     return "needs_confirmation";
   }
@@ -171,6 +203,50 @@ export function deriveTransitionVideoStatus(
   return "generated_unreviewed";
 }
 
+export function deriveTransitionNextAction(
+  transition: Transition,
+  promptStatus: TransitionPromptStatus,
+  videoStatus: TransitionVideoStatus,
+): TransitionNextAction {
+  if (!transition.transitionPrompt.trim()) {
+    return "write_prompt";
+  }
+
+  if (videoStatus === "generated_unreviewed") {
+    return "review";
+  }
+
+  if (videoStatus === "error" || videoStatus === "stale" || videoStatus === "not_ready") {
+    if (promptStatus === "blocked") {
+      return null;
+    }
+
+    return "generate";
+  }
+
+  return null;
+}
+
+export function deriveTransitionDisabledReason(
+  transition: Transition,
+  promptStatus: TransitionPromptStatus,
+  videoStatus: TransitionVideoStatus,
+): string | null {
+  if (!transition.transitionPrompt.trim()) {
+    return null;
+  }
+
+  if (promptStatus === "blocked") {
+    return "Generate adjacent frame outputs before creating a transition";
+  }
+
+  if (videoStatus === "queued" || videoStatus === "generating") {
+    return "Transition generation already in progress";
+  }
+
+  return null;
+}
+
 export function isTransitionVideoStale(
   transition: Transition,
   version: Transition["versions"][number],
@@ -178,13 +254,15 @@ export function isTransitionVideoStale(
 ) {
   const fromFrame = frameMap.get(transition.fromFrameId);
   const toFrame = frameMap.get(transition.toFrameId);
+  const fromEndpointVersionId = fromFrame ? getTransitionEndpointVersionId(fromFrame) : null;
+  const toEndpointVersionId = toFrame ? getTransitionEndpointVersionId(toFrame) : null;
 
   return (
     transition.sequenceScope !== "active" ||
     !fromFrame ||
     !toFrame ||
-    fromFrame.approvedVersionId !== version.fromApprovedVersionId ||
-    toFrame.approvedVersionId !== version.toApprovedVersionId ||
+    fromEndpointVersionId !== version.fromApprovedVersionId ||
+    toEndpointVersionId !== version.toApprovedVersionId ||
     transition.promptRevision !== version.promptRevision
   );
 }
@@ -198,14 +276,21 @@ export function buildProjectSnapshot(
   projectPath: string,
 ): ProjectSnapshot {
   const frameMap = new Map(manifest.frames.map((frame) => [frame.id, frame]));
-  const frames: FrameView[] = manifest.frames.map((frame) => ({
-    ...frame,
-    status: deriveFrameStatus(frame, manifest.jobs),
-    approvedVersion: getApprovedFrameVersion(frame),
-    latestVersion: getLatestFrameVersion(frame),
-    queuedJobs: manifest.jobs.filter((job) => job.targetParentId === frame.id && job.status !== "completed")
-      .length,
-  }));
+  const frames: FrameView[] = manifest.frames.map((frame) => {
+    const status = deriveFrameStatus(frame, manifest.jobs);
+
+    return {
+      ...frame,
+      status,
+      approvedVersion: getApprovedFrameVersion(frame),
+      latestVersion: getLatestFrameVersion(frame),
+      queuedJobs: manifest.jobs.filter(
+        (job) => job.targetParentId === frame.id && job.status !== "completed",
+      ).length,
+      nextAction: deriveFrameNextAction(status),
+      disabledReason: deriveFrameDisabledReason(status),
+    };
+  });
   const frameViewMap = new Map(frames.map((frame) => [frame.id, frame]));
 
   const orderedTransitionKeys = new Map(
@@ -220,20 +305,28 @@ export function buildProjectSnapshot(
         (orderedTransitionKeys.get(`${left.fromFrameId}:${left.toFrameId}`) ?? 0) -
         (orderedTransitionKeys.get(`${right.fromFrameId}:${right.toFrameId}`) ?? 0),
     )
-    .map((transition) => ({
-      ...transition,
-      promptStatus: deriveTransitionPromptStatus(transition, frameMap),
-      videoStatus: deriveTransitionVideoStatus(transition, manifest.jobs, frameMap),
-      fromFrame: frameViewMap.get(transition.fromFrameId)!,
-      toFrame: frameViewMap.get(transition.toFrameId)!,
-      approvedVideoVersion: getApprovedTransitionVideo(transition),
-      latestVideoVersion: getLatestTransitionVersion(transition),
-      isStale:
-        deriveTransitionPromptStatus(transition, frameMap) !== "confirmed" ||
-        (getLatestTransitionVersion(transition)
-          ? isTransitionVideoStale(transition, getLatestTransitionVersion(transition)!, frameMap)
-          : false),
-    }));
+    .map((transition) => {
+      const promptStatus = deriveTransitionPromptStatus(transition, frameMap);
+      const videoStatus = deriveTransitionVideoStatus(transition, manifest.jobs, frameMap);
+      const latestVideoVersion = getLatestTransitionVersion(transition);
+
+      return {
+        ...transition,
+        promptStatus,
+        videoStatus,
+        fromFrame: frameViewMap.get(transition.fromFrameId)!,
+        toFrame: frameViewMap.get(transition.toFrameId)!,
+        approvedVideoVersion: getApprovedTransitionVideo(transition),
+        latestVideoVersion,
+        isStale:
+          promptStatus !== "confirmed" ||
+          (latestVideoVersion
+            ? isTransitionVideoStale(transition, latestVideoVersion, frameMap)
+            : false),
+        nextAction: deriveTransitionNextAction(transition, promptStatus, videoStatus),
+        disabledReason: deriveTransitionDisabledReason(transition, promptStatus, videoStatus),
+      };
+    });
 
   return {
     projectPath,
@@ -368,8 +461,8 @@ export function reconcileTransitions(manifest: ProjectManifest) {
       const fromFrame = frameMap.get(existing.fromFrameId) ?? null;
       const toFrame = frameMap.get(existing.toFrameId) ?? null;
       existing.invalidationReason =
-        fromFrame?.approvedVersionId !== existing.confirmedFromVersionId ||
-        toFrame?.approvedVersionId !== existing.confirmedToVersionId
+        (fromFrame ? getTransitionEndpointVersionId(fromFrame) : null) !== existing.confirmedFromVersionId ||
+        (toFrame ? getTransitionEndpointVersionId(toFrame) : null) !== existing.confirmedToVersionId
           ? "endpoint_versions_changed"
           : null;
       usedTransitionIds.add(existing.id);

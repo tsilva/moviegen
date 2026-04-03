@@ -95,6 +95,100 @@ describe("project transition reconciliation", () => {
     const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
     expect(snapshot.transitions).toHaveLength(1);
     expect(snapshot.transitions[0]?.promptStatus).toBe("missing");
+    expect(snapshot.transitions[0]?.nextAction).toBe("write_prompt");
+  });
+
+  test("frame next actions follow the derived workflow state", () => {
+    const manifest = createEmptyManifest("test");
+    const draft = frame("Draft");
+    const needsReview = frame("Needs review");
+    const approved = frame("Approved");
+    const reviewVersion = frameVersion("framever_review");
+    const approvedVersion = frameVersion("framever_approved");
+
+    needsReview.versions.push(reviewVersion);
+    approved.versions.push(approvedVersion);
+    approved.approvedVersionId = approvedVersion.id;
+    manifest.frames = [draft, needsReview, approved].map((item, index) => ({
+      ...item,
+      position: index,
+    }));
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+
+    expect(snapshot.frames.map((item) => [item.title, item.nextAction])).toEqual([
+      ["Draft", "generate"],
+      ["Needs review", "review"],
+      ["Approved", null],
+    ]);
+  });
+
+  test("transition next action becomes generate once prompt exists and endpoints are available", () => {
+    const manifest = createEmptyManifest("test");
+    const first = frame("A");
+    const second = frame("B");
+    const firstVersion = frameVersion("framever_a");
+    const secondVersion = frameVersion("framever_b");
+    first.versions.push(firstVersion);
+    second.versions.push(secondVersion);
+    manifest.frames = [first, second].map((item, index) => ({ ...item, position: index }));
+
+    reconcileTransitions(manifest);
+    manifest.transitions[0]!.transitionPrompt = "Slow cinematic push";
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+    expect(snapshot.transitions[0]?.nextAction).toBe("generate");
+    expect(snapshot.transitions[0]?.disabledReason).toBeNull();
+  });
+
+  test("transition next action becomes review after a clip is generated but not approved", () => {
+    const manifest = createEmptyManifest("test");
+    const first = frame("A");
+    const second = frame("B");
+    const firstVersion = frameVersion("framever_a");
+    const secondVersion = frameVersion("framever_b");
+    first.versions.push(firstVersion);
+    second.versions.push(secondVersion);
+    manifest.frames = [first, second].map((item, index) => ({ ...item, position: index }));
+
+    reconcileTransitions(manifest);
+
+    const transition = manifest.transitions[0]!;
+    transition.transitionPrompt = "Slow cinematic push";
+    transition.promptRevision = 1;
+    transition.confirmedFromVersionId = firstVersion.id;
+    transition.confirmedToVersionId = secondVersion.id;
+    transition.versions.push({
+      id: createId("transitionver"),
+      model: "mock-video-model",
+      inputPayload: {},
+      outputPath: "transitions/clip.mp4",
+      posterPath: "transitions/poster.png",
+      generationJobId: createId("job"),
+      createdAt: nowIso(),
+      reviewerDecision: "unreviewed",
+      reviewerNotes: "",
+      promptRevision: 1,
+      fromApprovedVersionId: firstVersion.id,
+      toApprovedVersionId: secondVersion.id,
+    });
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+    expect(snapshot.transitions[0]?.nextAction).toBe("review");
+  });
+
+  test("transition disabled reason explains blocked generation when endpoint frames are missing", () => {
+    const manifest = createEmptyManifest("test");
+    const first = frame("A");
+    const second = frame("B");
+    manifest.frames = [first, second].map((item, index) => ({ ...item, position: index }));
+
+    reconcileTransitions(manifest);
+    manifest.transitions[0]!.transitionPrompt = "Crossfade";
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+    expect(snapshot.transitions[0]?.nextAction).toBeNull();
+    expect(snapshot.transitions[0]?.disabledReason).toMatch(/Generate adjacent frame outputs/i);
   });
 
   test("deleting a frame archives frame and touching transition assets, then removes JSON entries", async () => {

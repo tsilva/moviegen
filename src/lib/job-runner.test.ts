@@ -3,8 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const { generateFrameImagesMock } = vi.hoisted(() => ({
+const { generateFrameImagesMock, generateTransitionVideoMock } = vi.hoisted(() => ({
   generateFrameImagesMock: vi.fn(),
+  generateTransitionVideoMock: vi.fn(),
 }));
 
 vi.mock("./provider", async (importOriginal) => {
@@ -12,11 +13,18 @@ vi.mock("./provider", async (importOriginal) => {
   return {
     ...actual,
     generateFrameImages: generateFrameImagesMock,
+    generateTransitionVideo: generateTransitionVideoMock,
   };
 });
 
-import { createEmptyManifest, createId, nowIso, reorderFrames } from "./project-ops";
-import { enqueueFrameGeneration } from "./job-runner";
+import {
+  createEmptyManifest,
+  createId,
+  nowIso,
+  reconcileTransitions,
+  reorderFrames,
+} from "./project-ops";
+import { enqueueFrameGeneration, enqueueTransitionGeneration } from "./job-runner";
 import { readProjectSnapshot, saveManifest, setCurrentProjectPath } from "./project-store";
 import type { Frame, FrameVersion, ProjectManifest } from "./types";
 
@@ -83,11 +91,32 @@ async function waitForFrameJobToSettle(projectPath: string) {
   throw new Error("Timed out waiting for frame job to settle");
 }
 
+async function waitForTransitionJobToSettle(projectPath: string) {
+  const deadline = Date.now() + 2_000;
+
+  while (Date.now() < deadline) {
+    const snapshot = await readProjectSnapshot(projectPath);
+    const hasActiveTransitionJobs = snapshot.manifest.jobs.some(
+      (job) =>
+        job.kind === "transition_video" && (job.status === "queued" || job.status === "running"),
+    );
+
+    if (!hasActiveTransitionJobs) {
+      return snapshot;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  throw new Error("Timed out waiting for transition job to settle");
+}
+
 describe("frame job anchoring", () => {
   const tempDirs: string[] = [];
 
   beforeEach(() => {
     generateFrameImagesMock.mockReset();
+    generateTransitionVideoMock.mockReset();
     generateFrameImagesMock.mockResolvedValue([
       {
         model: "mock-edit-model",
@@ -96,6 +125,13 @@ describe("frame job anchoring", () => {
         inputPayload: { model: "mock-edit-model" },
       },
     ]);
+    generateTransitionVideoMock.mockResolvedValue({
+      model: "mock-video-model",
+      providerPredictionId: "pred_transition",
+      relativePath: path.join("transitions", "generated", "clip.mp4"),
+      posterRelativePath: path.join("transitions", "generated", "poster.png"),
+      inputPayload: { model: "mock-video-model" },
+    });
   });
 
   afterEach(async () => {
@@ -293,5 +329,59 @@ describe("frame job anchoring", () => {
       }),
     );
     expect(generateFrameImagesMock.mock.calls[0]?.[0].referenceImages).toHaveLength(1);
+  });
+
+  test("transition generation implicitly confirms the current endpoints before queueing", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    const fromOutputPath = path.join("frames", "first", "approved.png");
+    const toOutputPath = path.join("frames", "second", "approved.png");
+
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const second = createFrame("Second", 1);
+      const firstVersion = createFrameVersion(fromOutputPath);
+      const secondVersion = createFrameVersion(toOutputPath);
+      first.versions.push(firstVersion);
+      second.versions.push(secondVersion);
+      first.approvedVersionId = firstVersion.id;
+      second.approvedVersionId = secondVersion.id;
+      draft.frames = [first, second];
+      reconcileTransitions(draft);
+      draft.transitions[0]!.transitionPrompt = "Match cut";
+      draft.transitions[0]!.invalidationReason = "endpoint_versions_changed";
+      return draft;
+    });
+
+    const queuedSnapshot = await enqueueTransitionGeneration([manifest.transitions[0]!.id], {
+      duration: 4,
+      size: "1280x720",
+      fps: 24,
+    });
+
+    expect(queuedSnapshot.manifest.transitions[0]?.confirmedFromVersionId).toBe(
+      manifest.frames[0]!.approvedVersionId,
+    );
+    expect(queuedSnapshot.manifest.transitions[0]?.confirmedToVersionId).toBe(
+      manifest.frames[1]!.approvedVersionId,
+    );
+    expect(queuedSnapshot.manifest.transitions[0]?.invalidationReason).toBeNull();
+    expect(queuedSnapshot.manifest.jobs.at(-1)?.requestPayload).toMatchObject({
+      prompt: "Match cut",
+      fromApprovedVersionId: manifest.frames[0]!.approvedVersionId,
+      toApprovedVersionId: manifest.frames[1]!.approvedVersionId,
+    });
+
+    await waitForTransitionJobToSettle(projectPath);
+
+    expect(generateTransitionVideoMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fromImagePath: fromOutputPath,
+        toImagePath: toOutputPath,
+        prompt: "Match cut",
+      }),
+    );
   });
 });

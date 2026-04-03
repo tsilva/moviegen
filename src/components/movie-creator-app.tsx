@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useEffectEvent, useState, useTransition } from "react";
+import { useEffect, useEffectEvent, useRef, useState, useTransition } from "react";
 import Image from "next/image";
 import {
   ActionIcon,
@@ -12,6 +12,7 @@ import {
   Flex,
   Group,
   Loader,
+  Menu,
   Modal,
   NumberInput,
   ScrollArea,
@@ -44,6 +45,7 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   IconArrowsShuffle,
   IconChevronDown,
+  IconDotsVertical,
   IconLayoutList,
   IconLayoutSidebarRightExpand,
   IconPlayerPlay,
@@ -69,11 +71,6 @@ type ReviewTarget =
   | { type: "transition"; transition: TransitionView }
   | null;
 
-type PromptEditorTarget =
-  | { type: "frame"; frame: FrameView }
-  | { type: "transition"; transition: TransitionView }
-  | null;
-
 type ZoomTarget = {
   src: string;
   alt: string;
@@ -91,40 +88,124 @@ function assetUrl(relativePath: string | null | undefined) {
   return `/api/assets?path=${encodeURIComponent(relativePath)}`;
 }
 
-function transitionCanGenerate(transition: TransitionView) {
-  return (
-    transition.promptStatus === "confirmed" &&
-    transition.videoStatus !== "queued" &&
-    transition.videoStatus !== "generating"
-  );
+function frameStatusLabel(frame: FrameView) {
+  switch (frame.status) {
+    case "generated_unreviewed":
+      return "Needs review";
+    case "needs_regen":
+      return "Needs regen";
+    case "queued":
+      return "Queued";
+    case "generating":
+      return "Generating";
+    case "approved":
+      return "Approved";
+    case "error":
+      return "Error";
+    default:
+      return "Draft";
+  }
 }
 
-function transitionCanConfirm(transition: TransitionView) {
-  return transition.promptStatus !== "blocked" && Boolean(transition.transitionPrompt.trim());
+function frameStatusColor(frame: FrameView) {
+  switch (frame.status) {
+    case "approved":
+      return "teal";
+    case "error":
+      return "red";
+    case "queued":
+    case "generating":
+      return "blue";
+    case "generated_unreviewed":
+    case "needs_regen":
+      return "yellow";
+    default:
+      return "gray";
+  }
 }
 
-function transitionHasReviewableVersion(transition: TransitionView) {
-  return transition.versions.length > 0;
+function framePrimaryActionLabel(frame: FrameView) {
+  switch (frame.nextAction) {
+    case "generate":
+      return "Generate";
+    case "review":
+      return "Review";
+    default:
+      return null;
+  }
 }
 
-function transitionStatusColor(transition: TransitionView) {
-  if (transition.videoStatus === "approved") {
-    return "blue";
+function transitionWorkflowLabel(transition: TransitionView) {
+  if (!transition.transitionPrompt.trim()) {
+    return "Prompt missing";
   }
 
-  if (transition.videoStatus === "stale") {
-    return "yellow";
+  if (transition.videoStatus === "queued" || transition.videoStatus === "generating") {
+    return "Generating";
+  }
+
+  if (transition.nextAction === "review") {
+    return "Needs review";
+  }
+
+  if (transition.videoStatus === "approved") {
+    return "Approved";
   }
 
   if (transition.videoStatus === "error") {
-    return "red";
+    return "Error";
+  }
+
+  if (transition.nextAction === "generate") {
+    return "Ready to generate";
+  }
+
+  if (transition.disabledReason) {
+    return "Waiting on frames";
+  }
+
+  return "Idle";
+}
+
+function transitionWorkflowColor(transition: TransitionView) {
+  if (!transition.transitionPrompt.trim()) {
+    return "yellow";
   }
 
   if (transition.videoStatus === "queued" || transition.videoStatus === "generating") {
     return "cyan";
   }
 
+  if (transition.nextAction === "review") {
+    return "yellow";
+  }
+
+  if (transition.videoStatus === "approved") {
+    return "blue";
+  }
+
+  if (transition.videoStatus === "error") {
+    return "red";
+  }
+
+  if (transition.nextAction === "generate") {
+    return "teal";
+  }
+
   return "gray";
+}
+
+function transitionPrimaryActionLabel(transition: TransitionView) {
+  switch (transition.nextAction) {
+    case "write_prompt":
+      return "Write prompt";
+    case "generate":
+      return "Generate";
+    case "review":
+      return "Review";
+    default:
+      return null;
+  }
 }
 
 async function requestJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
@@ -140,9 +221,7 @@ type FrameCardProps = {
   frame: FrameView;
   selected: boolean;
   onSelect: () => void;
-  onEditPrompt: () => void;
-  onGenerate: () => void;
-  onReview: () => void;
+  onPrimaryAction: () => void;
   onDelete: () => void;
   onZoom: (target: ZoomTarget) => void;
 };
@@ -226,20 +305,13 @@ function ZoomableThumb({ src, zoomSrc, alt, emptyLabel, sizes, width, onZoom }: 
   );
 }
 
-function FrameCard({ frame, selected, onSelect, onEditPrompt, onGenerate, onReview, onDelete, onZoom }: FrameCardProps) {
+function FrameCard({ frame, selected, onSelect, onPrimaryAction, onDelete, onZoom }: FrameCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: frame.id,
   });
   const previewVersion = frame.approvedVersion ?? frame.latestVersion;
   const isGenerating = frame.status === "queued" || frame.status === "generating";
-  const statusColor =
-    frame.status === "approved"
-      ? "teal"
-      : frame.status === "error"
-        ? "red"
-        : isGenerating
-          ? "blue"
-          : "gray";
+  const primaryActionLabel = framePrimaryActionLabel(frame);
   const previewLabel = frame.approvedVersion
     ? "Approved"
     : isGenerating
@@ -309,8 +381,8 @@ function FrameCard({ frame, selected, onSelect, onEditPrompt, onGenerate, onRevi
               </Text>
             </Box>
             <Group gap="xs" wrap="nowrap">
-              <Badge color={statusColor}>
-                {frame.status}
+              <Badge color={frameStatusColor(frame)}>
+                {frameStatusLabel(frame)}
               </Badge>
               <ActionIcon variant="subtle" color="gray" {...attributes} {...listeners} aria-label="Drag frame">
                 <IconArrowsShuffle size={16} />
@@ -326,47 +398,37 @@ function FrameCard({ frame, selected, onSelect, onEditPrompt, onGenerate, onRevi
               {isGenerating ? ` · ${frame.queuedJobs} active job${frame.queuedJobs === 1 ? "" : "s"}` : ""}
             </Text>
             <Group gap="xs">
-              <Button
-                size="compact-sm"
-                variant="subtle"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onEditPrompt();
-                }}
-              >
-                Edit prompt
-              </Button>
-              <Button
-                size="compact-sm"
-                variant="light"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onGenerate();
-                }}
-                disabled={isGenerating}
-              >
-                {isGenerating ? "Working..." : "Generate"}
-              </Button>
-              <Button
-                size="compact-sm"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onReview();
-                }}
-              >
-                Review
-              </Button>
-              <Button
-                size="compact-sm"
-                color="red"
-                variant="subtle"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onDelete();
-                }}
-              >
-                Delete
-              </Button>
+              {selected && primaryActionLabel ? (
+                <Button
+                  size="compact-sm"
+                  variant={frame.nextAction === "review" ? "filled" : "light"}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onPrimaryAction();
+                  }}
+                >
+                  {primaryActionLabel}
+                </Button>
+              ) : null}
+              <Menu withinPortal position="bottom-end">
+                <Menu.Target>
+                  <ActionIcon
+                    variant="subtle"
+                    color="gray"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                    }}
+                    aria-label="Frame actions"
+                  >
+                    <IconDotsVertical size={16} />
+                  </ActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown onClick={(event) => event.stopPropagation()}>
+                  <Menu.Item color="red" leftSection={<IconTrash size={14} />} onClick={onDelete}>
+                    Delete frame
+                  </Menu.Item>
+                </Menu.Dropdown>
+              </Menu>
             </Group>
           </Group>
         </Stack>
@@ -379,10 +441,7 @@ type TransitionCardProps = {
   transition: TransitionView;
   selected: boolean;
   onSelect: () => void;
-  onEditPrompt: () => void;
-  onConfirmPrompt: () => void;
-  onReview: () => void;
-  onGenerate: () => void;
+  onPrimaryAction: () => void;
   onMovePair: () => void;
   onDelete: () => void;
   onZoom: (target: ZoomTarget) => void;
@@ -392,18 +451,14 @@ function TransitionCard({
   transition,
   selected,
   onSelect,
-  onEditPrompt,
-  onConfirmPrompt,
-  onReview,
-  onGenerate,
+  onPrimaryAction,
   onMovePair,
   onDelete,
   onZoom,
 }: TransitionCardProps) {
   const fromPreview = transition.fromFrame.approvedVersion ?? transition.fromFrame.latestVersion;
   const toPreview = transition.toFrame.approvedVersion ?? transition.toFrame.latestVersion;
-  const isGenerating =
-    transition.videoStatus === "queued" || transition.videoStatus === "generating";
+  const primaryActionLabel = transitionPrimaryActionLabel(transition);
 
   return (
     <Card
@@ -447,85 +502,58 @@ function TransitionCard({
               {transition.fromFrame.title || "Untitled"} to {transition.toFrame.title || "Untitled"}
             </Text>
             <Group gap="xs" wrap="nowrap">
-              <Badge color={transition.promptStatus === "confirmed" ? "teal" : "yellow"}>
-                {transition.promptStatus}
-              </Badge>
-              <Badge color={transitionStatusColor(transition)}>
-                {transition.videoStatus}
+              <Badge color={transitionWorkflowColor(transition)}>
+                {transitionWorkflowLabel(transition)}
               </Badge>
             </Group>
           </Group>
           <Text c="dimmed" lineClamp={2} size="sm">
             {transition.transitionPrompt || "No transition prompt yet."}
           </Text>
+          {transition.disabledReason ? (
+            <Text c="dimmed" size="xs">
+              {transition.disabledReason}
+            </Text>
+          ) : null}
           <Group justify="space-between" align="flex-end" wrap="wrap">
-            <Button
-              size="compact-sm"
-              variant="subtle"
-              leftSection={<IconArrowsShuffle size={14} />}
-              onClick={(event) => {
-                event.stopPropagation();
-                onMovePair();
-              }}
-            >
-              Move pair
-            </Button>
+            <Text c="dimmed" size="xs">
+              {transition.versions.length} candidate{transition.versions.length === 1 ? "" : "s"}
+            </Text>
             <Group gap="xs">
-              <Button
-                size="compact-sm"
-                variant="subtle"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onEditPrompt();
-                }}
-              >
-                Edit prompt
-              </Button>
-              {transition.promptStatus !== "confirmed" ? (
+              {selected && primaryActionLabel ? (
                 <Button
                   size="compact-sm"
-                  variant="light"
+                  variant={transition.nextAction === "review" ? "filled" : "light"}
                   onClick={(event) => {
                     event.stopPropagation();
-                    onConfirmPrompt();
+                    onPrimaryAction();
                   }}
-                  disabled={!transitionCanConfirm(transition)}
                 >
-                  Confirm prompt
+                  {primaryActionLabel}
                 </Button>
               ) : null}
-              <Button
-                size="compact-sm"
-                variant="light"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onGenerate();
-                }}
-                disabled={!transitionCanGenerate(transition)}
-              >
-                {isGenerating ? "Working..." : "Generate"}
-              </Button>
-              <Button
-                size="compact-sm"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onReview();
-                }}
-                disabled={!transitionHasReviewableVersion(transition)}
-              >
-                Review
-              </Button>
-              <Button
-                size="compact-sm"
-                color="red"
-                variant="subtle"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onDelete();
-                }}
-              >
-                Delete
-              </Button>
+              <Menu withinPortal position="bottom-end">
+                <Menu.Target>
+                  <ActionIcon
+                    variant="subtle"
+                    color="gray"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                    }}
+                    aria-label="Transition actions"
+                  >
+                    <IconDotsVertical size={16} />
+                  </ActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown onClick={(event) => event.stopPropagation()}>
+                  <Menu.Item leftSection={<IconArrowsShuffle size={14} />} onClick={onMovePair}>
+                    Move pair
+                  </Menu.Item>
+                  <Menu.Item color="red" leftSection={<IconTrash size={14} />} onClick={onDelete}>
+                    Delete transition
+                  </Menu.Item>
+                </Menu.Dropdown>
+              </Menu>
             </Group>
           </Group>
         </Stack>
@@ -627,59 +655,6 @@ function ZoomModal({ target, onClose }: ZoomModalProps) {
   );
 }
 
-type PromptEditorModalProps = {
-  target: PromptEditorTarget;
-  draft: string;
-  onDraftChange: (value: string) => void;
-  onClose: () => void;
-  onSave: () => void;
-};
-
-function PromptEditorModal({
-  target,
-  draft,
-  onDraftChange,
-  onClose,
-  onSave,
-}: PromptEditorModalProps) {
-  if (!target) {
-    return null;
-  }
-
-  const title =
-    target.type === "frame"
-      ? target.frame.title || `Frame ${target.frame.position + 1}`
-      : `${target.transition.fromFrame.title || "Untitled"} to ${target.transition.toFrame.title || "Untitled"}`;
-
-  return (
-    <Modal
-      opened
-      onClose={onClose}
-      size="lg"
-      title={target.type === "frame" ? "Edit frame prompt" : "Edit transition prompt"}
-    >
-      <Stack gap="md">
-        <Text c="dimmed" size="sm">
-          {title}
-        </Text>
-        <Textarea
-          label={target.type === "frame" ? "Image prompt" : "Transition prompt"}
-          minRows={8}
-          autosize
-          value={draft}
-          onChange={(event) => onDraftChange(event.currentTarget.value)}
-        />
-        <Group justify="flex-end">
-          <Button variant="subtle" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button onClick={onSave}>Save prompt</Button>
-        </Group>
-      </Stack>
-    </Modal>
-  );
-}
-
 export function MovieCreatorApp() {
   const [snapshot, setSnapshot] = useState<ProjectSnapshot | null>(null);
   const [projectPath, setProjectPath] = useState(() => {
@@ -691,8 +666,6 @@ export function MovieCreatorApp() {
   });
   const [bulkInput, setBulkInput] = useState("");
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget>(null);
-  const [promptEditorTarget, setPromptEditorTarget] = useState<PromptEditorTarget>(null);
-  const [promptDraft, setPromptDraft] = useState("");
   const [zoomTarget, setZoomTarget] = useState<ZoomTarget | null>(null);
   const [inspectorTab, setInspectorTab] = useState<"frame" | "transition">("frame");
   const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
@@ -700,6 +673,10 @@ export function MovieCreatorApp() {
   const [segmentMoveTarget, setSegmentMoveTarget] = useState<TransitionView | null>(null);
   const [segmentIndex, setSegmentIndex] = useState(0);
   const [isPending, startTransition] = useTransition();
+  const previousSelectedFrameRef = useRef<{
+    id: string | null;
+    status: FrameView["status"] | null;
+  }>({ id: null, status: null });
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
   async function loadProject(pathValue: string) {
@@ -768,20 +745,7 @@ export function MovieCreatorApp() {
   const selectedFrame = frames.find((frame) => frame.id === selectedFrameId) ?? frames[0] ?? null;
   const selectedTransition =
     transitions.find((transition) => transition.id === selectedTransitionId) ?? transitions[0] ?? null;
-  const selectedFrameIsGenerating =
-    selectedFrame?.status === "queued" || selectedFrame?.status === "generating";
   const selectedFrameCanUsePreviousReference = (selectedFrame?.position ?? 0) > 0;
-  const selectedTransitionIsGenerating =
-    selectedTransition?.videoStatus === "queued" || selectedTransition?.videoStatus === "generating";
-  const readyTransitionIds = transitions
-    .filter(
-      (transition) =>
-        transition.promptStatus === "confirmed" &&
-        transition.videoStatus !== "approved" &&
-        transition.videoStatus !== "queued" &&
-        transition.videoStatus !== "generating",
-    )
-    .map((transition) => transition.id);
 
   async function mutate<T extends ApiResult>(url: string, init: RequestInit, successMessage?: string) {
     try {
@@ -837,6 +801,20 @@ export function MovieCreatorApp() {
     }).then(setSnapshot).catch(() => {});
   }
 
+  function selectFrame(frameId: string) {
+    setSelectedFrameId(frameId);
+    setSelectedTransitionId(null);
+    setInspectorTab("frame");
+    persistUiState({ selectedFrameId: frameId, selectedTransitionId: null, inspectorOpen: true });
+  }
+
+  function selectTransition(transitionId: string) {
+    setSelectedTransitionId(transitionId);
+    setSelectedFrameId(null);
+    setInspectorTab("transition");
+    persistUiState({ selectedTransitionId: transitionId, selectedFrameId: null, inspectorOpen: true });
+  }
+
   const filter = snapshot?.manifest.ui.filter ?? "all";
   const filteredFrames = frames.filter((frame) => {
     if (filter === "needsAttention") {
@@ -848,60 +826,134 @@ export function MovieCreatorApp() {
     return true;
   });
 
-  function openPromptEditor(target: PromptEditorTarget) {
-    setPromptEditorTarget(target);
-    setPromptDraft(
-      target
-        ? target.type === "frame"
-          ? target.frame.imagePrompt
-          : target.transition.transitionPrompt
-        : "",
-    );
-  }
+  const framesNeedingGeneration = frames.filter((frame) => frame.nextAction === "generate");
+  const framesNeedingReview = frames.filter((frame) => frame.nextAction === "review");
+  const transitionsNeedingPrompt = transitions.filter((transition) => transition.nextAction === "write_prompt");
+  const transitionsReadyToGenerate = transitions.filter((transition) => transition.nextAction === "generate");
+  const transitionsNeedingReview = transitions.filter((transition) => transition.nextAction === "review");
 
-  async function savePromptEditor() {
-    if (!promptEditorTarget) {
+  async function runFramePrimaryAction(frame: FrameView) {
+    selectFrame(frame.id);
+
+    if (frame.nextAction === "generate") {
+      await mutate(
+        `/api/frames/${frame.id}/generate`,
+        { method: "POST" },
+        "Queued frame generation",
+      );
       return;
     }
 
-    const saved =
-      promptEditorTarget.type === "frame"
-        ? await mutate(
-            `/api/frames/${promptEditorTarget.frame.id}`,
-            {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ imagePrompt: promptDraft }),
-            },
-            "Frame updated",
-          )
-        : await mutate(
-            `/api/transitions/${promptEditorTarget.transition.id}`,
-            {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ transitionPrompt: promptDraft }),
-            },
-            "Transition updated",
-          );
-
-    if (saved) {
-      setPromptEditorTarget(null);
-      setPromptDraft("");
+    if (frame.nextAction === "review") {
+      setReviewTarget({ type: "frame", frame });
     }
   }
 
-  async function confirmTransitionPrompt(transitionId: string, prompt: string) {
-    return mutate(
-      `/api/transitions/${transitionId}/confirm-prompt`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
-      },
-      "Transition confirmed",
-    );
+  async function runTransitionPrimaryAction(transition: TransitionView) {
+    selectTransition(transition.id);
+
+    if (transition.nextAction === "write_prompt") {
+      notifications.show({ color: "cyan", message: "Edit the transition prompt in the inspector." });
+      return;
+    }
+
+    if (transition.nextAction === "generate") {
+      await mutate(
+        "/api/transitions/bulk-generate",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ transitionIds: [transition.id] }),
+        },
+        "Queued transition generation",
+      );
+      return;
+    }
+
+    if (transition.nextAction === "review") {
+      setReviewTarget({ type: "transition", transition });
+    }
   }
+
+  async function doNextAction() {
+    const nextTarget =
+      framesNeedingGeneration[0] ??
+      framesNeedingReview[0] ??
+      transitionsNeedingPrompt[0] ??
+      transitionsReadyToGenerate[0] ??
+      transitionsNeedingReview[0] ??
+      null;
+
+    if (!nextTarget) {
+      notifications.show({ color: "gray", message: "No pending workflow actions." });
+      return;
+    }
+
+    if ("imagePrompt" in nextTarget) {
+      await runFramePrimaryAction(nextTarget);
+      return;
+    }
+
+    await runTransitionPrimaryAction(nextTarget);
+  }
+
+  async function processReadyItems() {
+    if (framesNeedingGeneration.length) {
+      await mutate(
+        "/api/frames/bulk-generate",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ frameIds: framesNeedingGeneration.map((frame) => frame.id), candidateCount: 1 }),
+        },
+        "Queued frame generation",
+      );
+      return;
+    }
+
+    if (transitionsReadyToGenerate.length) {
+      await mutate(
+        "/api/transitions/bulk-generate",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ transitionIds: transitionsReadyToGenerate.map((transition) => transition.id) }),
+        },
+        "Queued transition generation",
+      );
+      return;
+    }
+
+    notifications.show({ color: "gray", message: "No ready batch work to process." });
+  }
+
+  useEffect(() => {
+    const previous = previousSelectedFrameRef.current;
+    let reviewTimeout: number | null = null;
+
+    if (
+      selectedFrame &&
+      previous.id === selectedFrame.id &&
+      (previous.status === "queued" || previous.status === "generating") &&
+      selectedFrame.nextAction === "review" &&
+      !reviewTarget
+    ) {
+      reviewTimeout = window.setTimeout(() => {
+        setReviewTarget({ type: "frame", frame: selectedFrame });
+      }, 0);
+    }
+
+    previousSelectedFrameRef.current = {
+      id: selectedFrame?.id ?? null,
+      status: selectedFrame?.status ?? null,
+    };
+
+    return () => {
+      if (reviewTimeout !== null) {
+        window.clearTimeout(reviewTimeout);
+      }
+    };
+  }, [reviewTarget, selectedFrame]);
 
   return (
     <>
@@ -999,49 +1051,37 @@ export function MovieCreatorApp() {
             <Card withBorder radius="lg" p="md">
               <Stack gap="sm">
                 <Group justify="space-between">
-                  <Text fw={600}>Batch actions</Text>
+                  <Text fw={600}>Up next</Text>
                   <Text c="dimmed" size="xs">
                     {frames.length} frames
                   </Text>
                 </Group>
-                <Button
-                  leftSection={<IconWand size={16} />}
-                  variant="light"
-                  onClick={() =>
-                    void mutate(
-                      "/api/frames/bulk-generate",
-                      {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ frameIds: frames.map((frame) => frame.id), candidateCount: 1 }),
-                      },
-                      "Queued frame generation",
-                    )
-                  }
-                  disabled={!frames.length}
-                >
-                  Generate all frames
+                <Text c="dimmed" size="sm">
+                  {framesNeedingGeneration.length} frames need generation
+                </Text>
+                <Text c="dimmed" size="sm">
+                  {framesNeedingReview.length} frames need review
+                </Text>
+                <Text c="dimmed" size="sm">
+                  {transitionsNeedingPrompt.length} transitions need prompts
+                </Text>
+                <Text c="dimmed" size="sm">
+                  {transitionsReadyToGenerate.length} transitions are ready to generate
+                </Text>
+                <Text c="dimmed" size="sm">
+                  {transitionsNeedingReview.length} transitions need review
+                </Text>
+                <Button leftSection={<IconWand size={16} />} variant="light" onClick={() => void doNextAction()}>
+                  Do next
                 </Button>
-	                <Button
-	                  leftSection={<IconPlayerPlay size={16} />}
-	                  variant="light"
-                  onClick={() =>
-                    void mutate(
-                      "/api/transitions/bulk-generate",
-                      {
-                        method: "POST",
-	                        headers: { "Content-Type": "application/json" },
-	                        body: JSON.stringify({
-	                          transitionIds: readyTransitionIds,
-	                        }),
-	                      },
-	                      "Queued transition generation",
-	                    )
-	                  }
-	                  disabled={!readyTransitionIds.length}
-	                >
-	                  Generate ready transitions
-	                </Button>
+                <Button
+                  leftSection={<IconPlayerPlay size={16} />}
+                  variant="light"
+                  onClick={() => void processReadyItems()}
+                  disabled={!framesNeedingGeneration.length && !transitionsReadyToGenerate.length}
+                >
+                  Process ready items
+                </Button>
                 <Button variant="subtle" onClick={() => void refreshProject()}>
                   Refresh
                 </Button>
@@ -1201,31 +1241,39 @@ export function MovieCreatorApp() {
                         ? "When enabled, generation uses the previous frame's approved image, or its latest candidate if nothing is approved yet."
                         : "The first frame has no previous frame to anchor to."}
                     </Text>
-                    <Group grow>
-                      <Button
-                        onClick={() =>
-                          void mutate(
-                            `/api/frames/${selectedFrame.id}/generate`,
-                            { method: "POST" },
-                            "Queued frame generation",
-                          )
-                        }
-                        disabled={selectedFrameIsGenerating}
-                      >
-                        {selectedFrameIsGenerating ? "Generating…" : "Generate"}
-                      </Button>
-                      <Button variant="light" onClick={() => setReviewTarget({ type: "frame", frame: selectedFrame })}>
-                        Review
-                      </Button>
+                    <Group justify="space-between" align="center">
+                      <Badge color={frameStatusColor(selectedFrame)}>
+                        {frameStatusLabel(selectedFrame)}
+                      </Badge>
+                      {selectedFrame.disabledReason ? (
+                        <Text c="dimmed" size="xs">
+                          {selectedFrame.disabledReason}
+                        </Text>
+                      ) : null}
                     </Group>
-                    <Button
-                      color="red"
-                      variant="light"
-                      leftSection={<IconTrash size={16} />}
-                      onClick={() => void deleteFrame(selectedFrame.id)}
-                    >
-                      Delete frame
-                    </Button>
+                    <Group grow>
+                      {framePrimaryActionLabel(selectedFrame) ? (
+                        <Button onClick={() => void runFramePrimaryAction(selectedFrame)}>
+                          {framePrimaryActionLabel(selectedFrame)}
+                        </Button>
+                      ) : (
+                        <Button disabled>No action required</Button>
+                      )}
+                      <Menu withinPortal position="bottom-end">
+                        <Menu.Target>
+                          <Button variant="light">More</Button>
+                        </Menu.Target>
+                        <Menu.Dropdown>
+                          <Menu.Item
+                            color="red"
+                            leftSection={<IconTrash size={14} />}
+                            onClick={() => void deleteFrame(selectedFrame.id)}
+                          >
+                            Delete frame
+                          </Menu.Item>
+                        </Menu.Dropdown>
+                      </Menu>
+                    </Group>
                   </Stack>
                 ) : (
                   <Text c="dimmed" size="sm">
@@ -1292,63 +1340,57 @@ export function MovieCreatorApp() {
                         )
                       }
                     />
-	                    <Group>
-	                      <Badge color={selectedTransition.promptStatus === "confirmed" ? "teal" : "yellow"}>
-	                        {selectedTransition.promptStatus}
+	                    <Group justify="space-between" align="center">
+	                      <Badge color={transitionWorkflowColor(selectedTransition)}>
+	                        {transitionWorkflowLabel(selectedTransition)}
 	                      </Badge>
-	                      <Badge color={transitionStatusColor(selectedTransition)}>
-	                        {selectedTransition.videoStatus}
-	                      </Badge>
+                        {selectedTransition.disabledReason ? (
+                          <Text c="dimmed" size="xs">
+                            {selectedTransition.disabledReason}
+                          </Text>
+                        ) : null}
 	                    </Group>
                     <Group grow>
-                      <Button
-                        variant="subtle"
-                        onClick={() => void confirmTransitionPrompt(selectedTransition.id, selectedTransition.transitionPrompt)}
-                        disabled={!transitionCanConfirm(selectedTransition)}
-                      >
-                        Confirm prompt
-                      </Button>
-	                      <Button
-	                        onClick={() =>
-	                          void mutate(
-                            "/api/transitions/bulk-generate",
-                            {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ transitionIds: [selectedTransition.id] }),
-                            },
-	                            "Queued transition generation",
-	                          )
-	                        }
-	                        disabled={!transitionCanGenerate(selectedTransition)}
-	                      >
-	                        {selectedTransitionIsGenerating ? "Generating…" : "Generate"}
-	                      </Button>
-                      <Button
-                        variant="light"
-                        onClick={() => setReviewTarget({ type: "transition", transition: selectedTransition })}
-                        disabled={!transitionHasReviewableVersion(selectedTransition)}
-                      >
-                        Review
-                      </Button>
+                      {transitionPrimaryActionLabel(selectedTransition) ? (
+                        <Button onClick={() => void runTransitionPrimaryAction(selectedTransition)}>
+                          {transitionPrimaryActionLabel(selectedTransition)}
+                        </Button>
+                      ) : (
+                        <Button disabled>No action required</Button>
+                      )}
+                      <Menu withinPortal position="bottom-end">
+                        <Menu.Target>
+                          <Button variant="light">More</Button>
+                        </Menu.Target>
+                        <Menu.Dropdown>
+                          <Menu.Item
+                            leftSection={<IconArrowsShuffle size={14} />}
+                            onClick={() => {
+                              setSegmentMoveTarget(selectedTransition);
+                              setSegmentIndex(selectedTransition.fromFrame.position + 1);
+                            }}
+                          >
+                            Move pair
+                          </Menu.Item>
+                          <Menu.Item
+                            color="red"
+                            leftSection={<IconTrash size={14} />}
+                            onClick={() => void deleteTransition(selectedTransition.id)}
+                          >
+                            Delete transition
+                          </Menu.Item>
+                        </Menu.Dropdown>
+                      </Menu>
                     </Group>
-                    {!transitionHasReviewableVersion(selectedTransition) ? (
+                    {!selectedTransition.latestVideoVersion ? (
                       <Text c="dimmed" size="sm">
-                        No transition video candidates yet. Confirm the prompt, then generate one before reviewing.
+                        Generate a transition clip once the prompt and frame endpoints are ready.
                       </Text>
                     ) : null}
-                    <Button
-                      color="red"
-                      variant="light"
-                      leftSection={<IconTrash size={16} />}
-                      onClick={() => void deleteTransition(selectedTransition.id)}
-                    >
-                      Delete transition
-                    </Button>
                   </Stack>
                 ) : (
                   <Text c="dimmed" size="sm">
-                    Select a transition to edit and confirm the prompt before generating video.
+                    Select a transition to edit its prompt and generate video when ready.
                   </Text>
                 )}
               </Tabs.Panel>
@@ -1432,26 +1474,8 @@ export function MovieCreatorApp() {
                             <FrameCard
                               frame={frame}
                               selected={selectedFrameId === frame.id}
-                              onSelect={() => {
-                                setSelectedFrameId(frame.id);
-                                setSelectedTransitionId(null);
-                                setInspectorTab("frame");
-                                persistUiState({ selectedFrameId: frame.id, selectedTransitionId: null });
-                              }}
-                              onEditPrompt={() => {
-                                setSelectedFrameId(frame.id);
-                                setSelectedTransitionId(null);
-                                setInspectorTab("frame");
-                                openPromptEditor({ type: "frame", frame });
-                              }}
-                              onGenerate={() =>
-                                void mutate(
-                                  `/api/frames/${frame.id}/generate`,
-                                  { method: "POST" },
-                                  "Queued frame generation",
-                                )
-                              }
-                              onReview={() => setReviewTarget({ type: "frame", frame })}
+                              onSelect={() => selectFrame(frame.id)}
+                              onPrimaryAction={() => void runFramePrimaryAction(frame)}
                               onDelete={() => void deleteFrame(frame.id)}
                               onZoom={setZoomTarget}
                             />
@@ -1459,31 +1483,8 @@ export function MovieCreatorApp() {
                             <TransitionCard
                               transition={transition}
                               selected={selectedTransitionId === transition.id}
-                              onSelect={() => {
-                                setSelectedTransitionId(transition.id);
-                                setSelectedFrameId(null);
-                                setInspectorTab("transition");
-                                persistUiState({ selectedTransitionId: transition.id, selectedFrameId: null });
-                              }}
-                              onEditPrompt={() => {
-                                setSelectedTransitionId(transition.id);
-                                setSelectedFrameId(null);
-                                setInspectorTab("transition");
-                                openPromptEditor({ type: "transition", transition });
-                              }}
-                              onConfirmPrompt={() => void confirmTransitionPrompt(transition.id, transition.transitionPrompt)}
-                              onReview={() => setReviewTarget({ type: "transition", transition })}
-                              onGenerate={() =>
-                                void mutate(
-                                  "/api/transitions/bulk-generate",
-                                  {
-                                    method: "POST",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ transitionIds: [transition.id] }),
-                                  },
-                                  "Queued transition generation",
-                                )
-                              }
+                              onSelect={() => selectTransition(transition.id)}
+                              onPrimaryAction={() => void runTransitionPrimaryAction(transition)}
                               onMovePair={() => {
                                 setSegmentMoveTarget(transition);
                                 setSegmentIndex(index + 1);
@@ -1520,18 +1521,6 @@ export function MovieCreatorApp() {
 
           await mutate(url, { method: "POST" }, "Approved version");
           setReviewTarget(null);
-        }}
-      />
-      <PromptEditorModal
-        target={promptEditorTarget}
-        draft={promptDraft}
-        onDraftChange={setPromptDraft}
-        onClose={() => {
-          setPromptEditorTarget(null);
-          setPromptDraft("");
-        }}
-        onSave={() => {
-          void savePromptEditor();
         }}
       />
       <ZoomModal target={zoomTarget} onClose={() => setZoomTarget(null)} />

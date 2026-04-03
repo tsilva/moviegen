@@ -111,6 +111,8 @@ export type FrameStatus =
   | "needs_regen"
   | "error";
 
+export type FrameNextAction = "generate" | "review" | null;
+
 export type TransitionPromptStatus =
   | "blocked"
   | "missing"
@@ -126,11 +128,15 @@ export type TransitionVideoStatus =
   | "stale"
   | "error";
 
+export type TransitionNextAction = "write_prompt" | "generate" | "review" | null;
+
 export type FrameView = Frame & {
   status: FrameStatus;
   approvedVersion: FrameVersion | null;
   latestVersion: FrameVersion | null;
   queuedJobs: number;
+  nextAction: FrameNextAction;
+  disabledReason: string | null;
 };
 
 export type TransitionView = Transition & {
@@ -141,6 +147,8 @@ export type TransitionView = Transition & {
   approvedVideoVersion: TransitionVersion | null;
   latestVideoVersion: TransitionVersion | null;
   isStale: boolean;
+  nextAction: TransitionNextAction;
+  disabledReason: string | null;
 };
 
 export type ProjectSnapshot = {

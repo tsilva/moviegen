@@ -2,7 +2,7 @@ import {
   IMAGE_MODEL,
   VIDEO_MODEL,
   createId,
-  deriveTransitionPromptStatus,
+  getTransitionEndpointVersionId,
   getApprovedFrameVersion,
   getLatestFrameVersion,
   nowIso,
@@ -563,10 +563,22 @@ export async function enqueueTransitionGeneration(
     const timestamp = nowIso();
 
     for (const transition of transitions) {
-      if (deriveTransitionPromptStatus(transition, frameMap) !== "confirmed") {
-        throw new Error("Transition prompt must be confirmed against the current endpoint frame versions");
+      const fromFrame = frameMap.get(transition.fromFrameId) ?? null;
+      const toFrame = frameMap.get(transition.toFrameId) ?? null;
+      const fromEndpointVersionId = fromFrame ? getTransitionEndpointVersionId(fromFrame) : null;
+      const toEndpointVersionId = toFrame ? getTransitionEndpointVersionId(toFrame) : null;
+
+      if (!transition.transitionPrompt.trim()) {
+        throw new Error("Transition prompt is required before generating video");
       }
 
+      if (!fromEndpointVersionId || !toEndpointVersionId) {
+        throw new Error("Both endpoint frames need at least one generated version before generating a transition");
+      }
+
+      transition.confirmedFromVersionId = fromEndpointVersionId;
+      transition.confirmedToVersionId = toEndpointVersionId;
+      transition.invalidationReason = null;
       manifest.jobs.push(buildQueuedTransitionJob(transition, options));
       transition.updatedAt = timestamp;
     }
