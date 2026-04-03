@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { createEmptyManifest, createId, nowIso } from "./project-ops";
 import {
+  clearProject,
   openProject,
   readProjectSnapshot,
   saveManifest,
@@ -126,5 +127,36 @@ describe("project store concurrency", () => {
 
     const reloadedSnapshot = await readProjectSnapshot(projectPath);
     expect(reloadedSnapshot.manifest.jobs.map((job) => job.status)).toEqual(["completed", "error"]);
+  });
+
+  test("clearing a project removes Moviegen-managed assets and recreates an empty manifest", async () => {
+    const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "moviegen-project-store-"));
+    tempDirs.push(projectPath);
+
+    const manifest = createEmptyManifest("moviegen");
+    manifest.frames = [createFrame("Opening shot", 0)];
+    manifest.jobs.push(createJob(manifest.frames[0]!.id, "completed"));
+    await saveManifest(projectPath, manifest);
+    await fs.mkdir(path.join(projectPath, "frames", "frame_a"), { recursive: true });
+    await fs.writeFile(path.join(projectPath, "frames", "frame_a", "image.png"), "frame");
+    await fs.mkdir(path.join(projectPath, "transitions", "transition_a"), { recursive: true });
+    await fs.writeFile(path.join(projectPath, "transitions", "transition_a", "clip.mp4"), "transition");
+    await fs.mkdir(path.join(projectPath, "deleted", "frames", "old_frame"), { recursive: true });
+    await fs.writeFile(path.join(projectPath, "deleted", "frames", "old_frame", "image.png"), "deleted");
+    await fs.writeFile(path.join(projectPath, "notes.txt"), "keep me");
+
+    const snapshot = await clearProject(projectPath);
+
+    expect(snapshot.projectPath).toBe(projectPath);
+    expect(snapshot.manifest.project.name).toBe(path.basename(projectPath));
+    expect(snapshot.manifest.frames).toEqual([]);
+    expect(snapshot.manifest.transitions).toEqual([]);
+    expect(snapshot.manifest.jobs).toEqual([]);
+    await expect(fs.access(path.join(projectPath, "moviegen.project.json"))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(projectPath, "frames"))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(projectPath, "transitions"))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(projectPath, "deleted"))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(projectPath, "notes.txt"))).resolves.toBeUndefined();
+    expect(await fs.readFile(path.join(projectPath, "notes.txt"), "utf8")).toBe("keep me");
   });
 });

@@ -16,6 +16,8 @@ type RuntimeState = {
   projectLocks: Map<string, Promise<void>>;
 };
 
+const PROJECT_CONTENT_DIRECTORIES = ["frames", "transitions", path.join("deleted")] as const;
+
 declare global {
   var __moviegenRuntimeState__: RuntimeState | undefined;
 }
@@ -119,6 +121,28 @@ export async function openProject(projectPathInput: string, createIfMissing = tr
   if (discardedActiveJobs) {
     await saveManifest(projectPath, manifest);
   }
+
+  setCurrentProjectPath(projectPath);
+  return buildProjectSnapshot(manifest, projectPath);
+}
+
+export async function clearProject(projectPathInput: string) {
+  const projectPath = path.resolve(projectPathInput);
+
+  const manifest = await withProjectLock(projectPath, async () => {
+    await Promise.all([
+      fs.rm(getManifestPath(projectPath), { force: true }),
+      ...PROJECT_CONTENT_DIRECTORIES.map((directory) =>
+        fs.rm(path.join(projectPath, directory), { recursive: true, force: true }),
+      ),
+    ]);
+
+    await ensureProjectDirectories(projectPath);
+    const nextManifest = createEmptyManifest(path.basename(projectPath));
+    await saveManifest(projectPath, nextManifest);
+    getRuntimeState().undoStacks.delete(projectPath);
+    return nextManifest;
+  });
 
   setCurrentProjectPath(projectPath);
   return buildProjectSnapshot(manifest, projectPath);

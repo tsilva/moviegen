@@ -1154,6 +1154,37 @@ export function MovieCreatorApp({
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
   const normalizedProjectPath = projectPath.trim();
 
+  function applyProjectSnapshot(result: ProjectSnapshot, options?: { notifyMessage?: string; closeProjectModal?: boolean }) {
+    const nextSelection = getInitialSelection(result);
+    setSnapshot(result);
+    setProjectPath(result.projectPath);
+    setSelectedFrameId(nextSelection.selectedFrameId);
+    setSelectedTransitionId(nextSelection.selectedTransitionId);
+    setGallerySelection({});
+    previousPendingByEntryRef.current = {};
+    setMovieCursor(0);
+    setMoviePlaying(false);
+    movieVideoRef.current?.pause();
+    setBulkInput("");
+    setBulkModalOpen(false);
+    setBulkInsertIndex(null);
+    setFrameGenerationTargetId(null);
+    setFrameGenerationPromptDraft("");
+    setFrameGenerationUsePreviousDraft(false);
+    setTransitionPromptDraft(
+      result.transitions.find((transition) => transition.id === nextSelection.selectedTransitionId)?.transitionPrompt ?? "",
+    );
+    setActiveEditor(null);
+
+    if (options?.closeProjectModal ?? true) {
+      setProjectModalOpen(false);
+    }
+
+    if (options?.notifyMessage) {
+      notifications.show({ color: "teal", message: options.notifyMessage });
+    }
+  }
+
   function galleryKey(kind: "frame" | "transition", id: string) {
     return `${kind}:${id}`;
   }
@@ -1193,29 +1224,10 @@ export function MovieCreatorApp({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectPath: nextProjectPath, createIfMissing: true }),
       });
-      const nextSelection = getInitialSelection(result);
-      setSnapshot(result);
-      setProjectPath(result.projectPath);
-      setSelectedFrameId(nextSelection.selectedFrameId);
-      setSelectedTransitionId(nextSelection.selectedTransitionId);
-      setGallerySelection({});
-      previousPendingByEntryRef.current = {};
-      setMovieCursor(0);
-      setMoviePlaying(false);
-      movieVideoRef.current?.pause();
-      setBulkInput("");
-      setBulkModalOpen(false);
-      setBulkInsertIndex(null);
-      setFrameGenerationTargetId(null);
-      setFrameGenerationPromptDraft("");
-      setFrameGenerationUsePreviousDraft(false);
-      setTransitionPromptDraft(
-        result.transitions.find((transition) => transition.id === nextSelection.selectedTransitionId)?.transitionPrompt ?? "",
-      );
-      setActiveEditor(null);
-      setProjectModalOpen(false);
       if (shouldNotify) {
-        notifications.show({ color: "teal", message: `Opened ${result.projectPath}` });
+        applyProjectSnapshot(result, { notifyMessage: `Opened ${result.projectPath}` });
+      } else {
+        applyProjectSnapshot(result);
       }
     } catch (error) {
       if (shouldNotify) {
@@ -1240,6 +1252,25 @@ export function MovieCreatorApp({
       setSnapshot(result);
     } catch (error) {
       notifications.show({ color: "red", message: error instanceof Error ? error.message : "Refresh failed" });
+    }
+  }
+
+  async function clearProjectState() {
+    if (
+      !window.confirm(
+        "Clear this project and delete all Moviegen entries and generated assets in this folder? This removes moviegen.project.json, frames/, transitions/, and deleted/, then recreates an empty project.",
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const result = await requestJson<ProjectSnapshot>("/api/project/clear", {
+        method: "POST",
+      });
+      applyProjectSnapshot(result, { notifyMessage: "Project cleared" });
+    } catch (error) {
+      notifications.show({ color: "red", message: error instanceof Error ? error.message : "Clear failed" });
     }
   }
 
@@ -1789,6 +1820,14 @@ export function MovieCreatorApp({
                           }}
                         >
                           {reorderMode ? "Exit Reorder Mode" : "Enter Reorder Mode"}
+                        </Menu.Item>
+                        <Menu.Divider />
+                        <Menu.Item
+                          color="red"
+                          leftSection={<IconTrash size={14} aria-hidden="true" />}
+                          onClick={() => void clearProjectState()}
+                        >
+                          Clear Project
                         </Menu.Item>
                       </Menu.Dropdown>
                     </Menu>
