@@ -14,16 +14,18 @@ export const frameVersionSchema = z.object({
   createdAt: z.string(),
   reviewerDecision: reviewerDecisionSchema,
   reviewerNotes: z.string(),
+  sourcePrompt: z.string().nullable().optional(),
+  usePreviousFrameAsReference: z.boolean().nullable().optional(),
+  dependencyFrameId: z.string().nullable().optional(),
+  dependencyVersionId: z.string().nullable().optional(),
 });
 
 export const frameSchema = z.object({
   id: z.string(),
   position: z.number(),
-  title: z.string(),
   imagePrompt: z.string(),
   referenceImages: z.array(z.string()),
   usePreviousFrameAsReference: z.boolean().default(true),
-  notes: z.string(),
   approvedVersionId: z.string().nullable(),
   versions: z.array(frameVersionSchema),
   createdAt: z.string(),
@@ -94,7 +96,12 @@ export const projectManifestSchema = z.object({
     viewMode: z.enum(["sequence", "table"]).catch("sequence").transform(() => "sequence" as const),
     selectedFrameId: z.string().nullable(),
     selectedTransitionId: z.string().nullable(),
-    inspectorOpen: z.boolean(),
-    filter: z.enum(["all", "needsAttention", "approved"]),
+    filter: z.enum(["all", "needsRepair", "needsAttention", "approved"]).catch("needsRepair").transform((value) => {
+      if (value === "all") {
+        return "all" as const;
+      }
+
+      return "needsRepair" as const;
+    }),
   }),
 });

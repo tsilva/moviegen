@@ -13,16 +13,14 @@ import {
 import type { Frame, FrameVersion } from "./types";
 import { deleteFrameFromProject, deleteTransitionFromProject } from "./delete-ops";
 
-function frame(title: string): Frame {
+function frame(name: string): Frame {
   const timestamp = nowIso();
   return {
     id: createId("frame"),
     position: 0,
-    title,
-    imagePrompt: `${title} prompt`,
+    imagePrompt: `${name} prompt`,
     referenceImages: [],
     usePreviousFrameAsReference: false,
-    notes: "",
     approvedVersionId: null,
     versions: [],
     createdAt: timestamp,
@@ -41,6 +39,10 @@ function frameVersion(id: string): FrameVersion {
     createdAt: nowIso(),
     reviewerDecision: "unreviewed" as const,
     reviewerNotes: "",
+    sourcePrompt: null,
+    usePreviousFrameAsReference: null,
+    dependencyFrameId: null,
+    dependencyVersionId: null,
   };
 }
 
@@ -73,9 +75,11 @@ describe("project transition reconciliation", () => {
     reconcileTransitions(manifest);
 
     const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
-    expect(snapshot.transitions.map((transition) => [transition.fromFrame.title, transition.toFrame.title])).toEqual([
-      ["A", "C"],
-      ["C", "B"],
+    expect(
+      snapshot.transitions.map((transition) => [transition.fromFrame.position, transition.toFrame.position]),
+    ).toEqual([
+      [0, 1],
+      [1, 2],
     ]);
     expect(
       manifest.transitions.filter((transition) => transition.sequenceScope === "archived").length,
@@ -116,10 +120,10 @@ describe("project transition reconciliation", () => {
 
     const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
 
-    expect(snapshot.frames.map((item) => [item.title, item.nextAction])).toEqual([
-      ["Draft", "generate"],
-      ["Needs review", "review"],
-      ["Approved", null],
+    expect(snapshot.frames.map((item) => [item.position, item.nextAction])).toEqual([
+      [0, "generate"],
+      [1, "review"],
+      [2, null],
     ]);
   });
 
@@ -188,7 +192,123 @@ describe("project transition reconciliation", () => {
 
     const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
     expect(snapshot.transitions[0]?.nextAction).toBeNull();
-    expect(snapshot.transitions[0]?.disabledReason).toMatch(/Generate adjacent frame outputs/i);
+    expect(snapshot.transitions[0]?.disabledReason).toMatch(/Waiting on Frame 1 & Frame 2/i);
+  });
+
+  test("upstream frame changes mark the next anchored frame stale and the following frame blocked", () => {
+    const manifest = createEmptyManifest("test");
+    const first = frame("A");
+    const second = frame("B");
+    const third = frame("C");
+    second.usePreviousFrameAsReference = true;
+    third.usePreviousFrameAsReference = true;
+
+    const firstOld = {
+      ...frameVersion("framever_first_old"),
+      sourcePrompt: first.imagePrompt,
+    };
+    const firstNew = {
+      ...frameVersion("framever_first_new"),
+      sourcePrompt: first.imagePrompt,
+    };
+    const secondApproved = {
+      ...frameVersion("framever_second"),
+      sourcePrompt: second.imagePrompt,
+      usePreviousFrameAsReference: true,
+      dependencyFrameId: first.id,
+      dependencyVersionId: firstOld.id,
+    };
+    const thirdApproved = {
+      ...frameVersion("framever_third"),
+      sourcePrompt: third.imagePrompt,
+      usePreviousFrameAsReference: true,
+      dependencyFrameId: second.id,
+      dependencyVersionId: secondApproved.id,
+    };
+
+    first.versions.push(firstOld, firstNew);
+    first.approvedVersionId = firstNew.id;
+    second.versions.push(secondApproved);
+    second.approvedVersionId = secondApproved.id;
+    third.versions.push(thirdApproved);
+    third.approvedVersionId = thirdApproved.id;
+
+    manifest.frames = [first, second, third].map((item, index) => ({ ...item, position: index }));
+    reconcileTransitions(manifest);
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+    expect(snapshot.frames.map((item) => item.status)).toEqual([
+      "approved",
+      "stale_dependency",
+      "blocked_upstream",
+    ]);
+    expect(snapshot.frames[1]?.nextAction).toBe("generate");
+    expect(snapshot.frames[2]?.blockedByFrameId).toBe(second.id);
+  });
+
+  test("transitions touching stale frames become blocked and stale", () => {
+    const manifest = createEmptyManifest("test");
+    const first = frame("A");
+    const second = frame("B");
+    second.usePreviousFrameAsReference = true;
+
+    const firstOld = frameVersion("framever_first_old");
+    const firstNew = frameVersion("framever_first_new");
+    const secondApproved = {
+      ...frameVersion("framever_second"),
+      sourcePrompt: second.imagePrompt,
+      usePreviousFrameAsReference: true,
+      dependencyFrameId: first.id,
+      dependencyVersionId: firstOld.id,
+    };
+
+    first.versions.push(firstOld, firstNew);
+    first.approvedVersionId = firstNew.id;
+    second.versions.push(secondApproved);
+    second.approvedVersionId = secondApproved.id;
+    manifest.frames = [first, second].map((item, index) => ({ ...item, position: index }));
+    reconcileTransitions(manifest);
+
+    const transition = manifest.transitions[0]!;
+    transition.transitionPrompt = "Crossfade";
+    transition.promptRevision = 1;
+    transition.confirmedFromVersionId = firstOld.id;
+    transition.confirmedToVersionId = secondApproved.id;
+    transition.versions.push({
+      id: createId("transitionver"),
+      model: "mock-video-model",
+      inputPayload: {},
+      outputPath: "transitions/stale.mp4",
+      posterPath: "transitions/stale.png",
+      generationJobId: createId("job"),
+      createdAt: nowIso(),
+      reviewerDecision: "approved",
+      reviewerNotes: "",
+      promptRevision: 1,
+      fromApprovedVersionId: firstOld.id,
+      toApprovedVersionId: secondApproved.id,
+    });
+    transition.approvedVideoVersionId = transition.versions[0]!.id;
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+    expect(snapshot.transitions[0]?.videoStatus).toBe("stale");
+    expect(snapshot.transitions[0]?.blockedByFrameIds).toEqual([second.id]);
+    expect(snapshot.transitions[0]?.nextAction).toBeNull();
+  });
+
+  test("queue ranks remain upstream to downstream after reorder", () => {
+    const manifest = createEmptyManifest("test");
+    const first = frame("A");
+    const second = frame("B");
+    const third = frame("C");
+    manifest.frames = [first, second, third].map((item, index) => ({ ...item, position: index }));
+    reconcileTransitions(manifest);
+    reorderFrames(manifest, [third.id, first.id, second.id]);
+    reconcileTransitions(manifest);
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+    expect(snapshot.frames.map((item) => item.queueRank)).toEqual([0, 2, 4]);
+    expect(snapshot.transitions.map((item) => item.queueRank)).toEqual([1, 3]);
   });
 
   test("deleting a frame archives frame and touching transition assets, then removes JSON entries", async () => {

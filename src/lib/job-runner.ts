@@ -2,7 +2,7 @@ import {
   IMAGE_MODEL,
   VIDEO_MODEL,
   createId,
-  getTransitionEndpointVersionId,
+  getCurrentFrameVersionIdForManifest,
   getApprovedFrameVersion,
   getLatestFrameVersion,
   nowIso,
@@ -28,6 +28,8 @@ type ClaimedFrameJob = {
   frame: Frame;
   projectPath: string;
   referenceImages: string[];
+  dependencyFrameId: string | null;
+  dependencyVersionId: string | null;
 };
 
 type ClaimedTransitionJob = {
@@ -65,7 +67,11 @@ function getJobRunnerState(): JobRunnerState {
 
 function resolveFrameReferenceImages(frame: Frame, manifest: ProjectManifest) {
   if (!frame.usePreviousFrameAsReference) {
-    return frame.referenceImages;
+    return {
+      referenceImages: frame.referenceImages,
+      dependencyFrameId: null,
+      dependencyVersionId: null,
+    };
   }
 
   const orderedFrames = [...manifest.frames].sort((left, right) => left.position - right.position);
@@ -75,12 +81,20 @@ function resolveFrameReferenceImages(frame: Frame, manifest: ProjectManifest) {
   }
 
   if (frameIndex === 0) {
-    return frame.referenceImages;
+    return {
+      referenceImages: frame.referenceImages,
+      dependencyFrameId: null,
+      dependencyVersionId: null,
+    };
   }
 
   const previousFrame = orderedFrames[frameIndex - 1];
   if (!previousFrame) {
-    return frame.referenceImages;
+    return {
+      referenceImages: frame.referenceImages,
+      dependencyFrameId: null,
+      dependencyVersionId: null,
+    };
   }
 
   const previousVersion = getApprovedFrameVersion(previousFrame) ?? getLatestFrameVersion(previousFrame);
@@ -88,7 +102,11 @@ function resolveFrameReferenceImages(frame: Frame, manifest: ProjectManifest) {
     throw new Error("Previous frame does not have a generated image to use as a reference");
   }
 
-  return [previousVersion.outputPath];
+  return {
+    referenceImages: [previousVersion.outputPath],
+    dependencyFrameId: previousFrame.id,
+    dependencyVersionId: previousVersion.id,
+  };
 }
 
 async function claimNextQueuedFrameJob(projectPath: string): Promise<ClaimedFrameJob | null> {
@@ -111,8 +129,13 @@ async function claimNextQueuedFrameJob(projectPath: string): Promise<ClaimedFram
     }
 
     let referenceImages: string[];
+    let dependencyFrameId: string | null = null;
+    let dependencyVersionId: string | null = null;
     try {
-      referenceImages = resolveFrameReferenceImages(frame, manifest);
+      const resolvedReference = resolveFrameReferenceImages(frame, manifest);
+      referenceImages = resolvedReference.referenceImages;
+      dependencyFrameId = resolvedReference.dependencyFrameId;
+      dependencyVersionId = resolvedReference.dependencyVersionId;
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to resolve frame reference images";
@@ -134,6 +157,8 @@ async function claimNextQueuedFrameJob(projectPath: string): Promise<ClaimedFram
       frame: structuredClone(frame),
       projectPath,
       referenceImages,
+      dependencyFrameId,
+      dependencyVersionId,
     };
   });
 
@@ -224,6 +249,8 @@ async function completeFrameJob(
   model: string,
   providerPredictionId: string | null,
   inputPayload: Record<string, unknown>,
+  dependencyFrameId: string | null,
+  dependencyVersionId: string | null,
 ) {
   await mutateProject(projectPath, (manifest) => {
     const job = manifest.jobs.find((item) => item.id === jobId);
@@ -263,6 +290,10 @@ async function completeFrameJob(
       createdAt: timestamp,
       reviewerDecision: "unreviewed",
       reviewerNotes: "",
+      sourcePrompt: frame.imagePrompt,
+      usePreviousFrameAsReference: frame.usePreviousFrameAsReference,
+      dependencyFrameId,
+      dependencyVersionId,
     });
     frame.updatedAt = timestamp;
   });
@@ -382,6 +413,8 @@ async function runQueuedFrameJobs(projectPath: string) {
           asset.model,
           asset.providerPredictionId,
           asset.inputPayload,
+          claimed.dependencyFrameId,
+          claimed.dependencyVersionId,
         );
       } catch (error) {
         await failJob(
@@ -565,8 +598,8 @@ export async function enqueueTransitionGeneration(
     for (const transition of transitions) {
       const fromFrame = frameMap.get(transition.fromFrameId) ?? null;
       const toFrame = frameMap.get(transition.toFrameId) ?? null;
-      const fromEndpointVersionId = fromFrame ? getTransitionEndpointVersionId(fromFrame) : null;
-      const toEndpointVersionId = toFrame ? getTransitionEndpointVersionId(toFrame) : null;
+      const fromEndpointVersionId = fromFrame ? getCurrentFrameVersionIdForManifest(manifest, fromFrame.id) : null;
+      const toEndpointVersionId = toFrame ? getCurrentFrameVersionIdForManifest(manifest, toFrame.id) : null;
 
       if (!transition.transitionPrompt.trim()) {
         throw new Error("Transition prompt is required before generating video");

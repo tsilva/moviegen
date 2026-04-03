@@ -13,10 +13,8 @@ describe("project schema", () => {
         {
           id: createId("frame"),
           position: 0,
-          title: "Legacy frame",
           imagePrompt: "A windswept lighthouse at dusk",
           referenceImages: [],
-          notes: "",
           approvedVersionId: null,
           versions: [],
           createdAt: timestamp,
@@ -26,5 +24,21 @@ describe("project schema", () => {
     });
 
     expect(parsed.frames[0]?.usePreviousFrameAsReference).toBe(true);
+    expect(parsed.frames[0]).not.toHaveProperty("title");
+    expect(parsed.frames[0]).not.toHaveProperty("notes");
+  });
+
+  test("maps legacy UI filters onto needsRepair", () => {
+    const manifest = createEmptyManifest("legacy-project");
+
+    const parsed = projectManifestSchema.parse({
+      ...manifest,
+      ui: {
+        ...manifest.ui,
+        filter: "needsAttention",
+      },
+    });
+
+    expect(parsed.ui.filter).toBe("needsRepair");
   });
 });

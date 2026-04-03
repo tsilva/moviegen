@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { failure, ok } from "@/lib/http";
+import { getCurrentFrameVersionIdForManifest } from "@/lib/project-ops";
 import { mutateCurrentProject } from "@/lib/project-store";
 
 const requestSchema = z.object({
@@ -20,11 +21,11 @@ export async function POST(
         throw new Error("Transition not found");
       }
 
-      const fromFrame = manifest.frames.find((frame) => frame.id === transition.fromFrameId);
-      const toFrame = manifest.frames.find((frame) => frame.id === transition.toFrameId);
+      const fromEndpointVersionId = getCurrentFrameVersionIdForManifest(manifest, transition.fromFrameId);
+      const toEndpointVersionId = getCurrentFrameVersionIdForManifest(manifest, transition.toFrameId);
 
-      if (!fromFrame?.approvedVersionId || !toFrame?.approvedVersionId) {
-        throw new Error("Both endpoint frames must be approved before confirming a transition");
+      if (!fromEndpointVersionId || !toEndpointVersionId) {
+        throw new Error("Both endpoint frames need at least one generated version before confirming a transition");
       }
 
       if (transition.transitionPrompt !== body.prompt) {
@@ -32,8 +33,8 @@ export async function POST(
       }
 
       transition.transitionPrompt = body.prompt;
-      transition.confirmedFromVersionId = fromFrame.approvedVersionId;
-      transition.confirmedToVersionId = toFrame.approvedVersionId;
+      transition.confirmedFromVersionId = fromEndpointVersionId;
+      transition.confirmedToVersionId = toEndpointVersionId;
       transition.invalidationReason = null;
       transition.updatedAt = new Date().toISOString();
     });

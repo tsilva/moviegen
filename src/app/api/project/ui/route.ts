@@ -5,8 +5,7 @@ import { mutateCurrentProject } from "@/lib/project-store";
 const requestSchema = z.object({
   selectedFrameId: z.string().nullable().optional(),
   selectedTransitionId: z.string().nullable().optional(),
-  inspectorOpen: z.boolean().optional(),
-  filter: z.enum(["all", "needsAttention", "approved"]).optional(),
+  filter: z.enum(["all", "needsRepair"]).optional(),
 });
 
 export async function POST(request: Request) {

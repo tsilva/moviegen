@@ -21,16 +21,18 @@ export type FrameVersion = {
   createdAt: string;
   reviewerDecision: ReviewerDecision;
   reviewerNotes: string;
+  sourcePrompt?: string | null;
+  usePreviousFrameAsReference?: boolean | null;
+  dependencyFrameId?: string | null;
+  dependencyVersionId?: string | null;
 };
 
 export type Frame = {
   id: string;
   position: number;
-  title: string;
   imagePrompt: string;
   referenceImages: string[];
   usePreviousFrameAsReference: boolean;
-  notes: string;
   approvedVersionId: string | null;
   versions: FrameVersion[];
   createdAt: string;
@@ -90,8 +92,7 @@ export type PersistedUiState = {
   viewMode: "sequence";
   selectedFrameId: string | null;
   selectedTransitionId: string | null;
-  inspectorOpen: boolean;
-  filter: "all" | "needsAttention" | "approved";
+  filter: "all" | "needsRepair";
 };
 
 export type ProjectManifest = {
@@ -104,11 +105,12 @@ export type ProjectManifest = {
 
 export type FrameStatus =
   | "draft"
+  | "blocked_upstream"
+  | "stale_dependency"
   | "queued"
   | "generating"
   | "generated_unreviewed"
   | "approved"
-  | "needs_regen"
   | "error";
 
 export type FrameNextAction = "generate" | "review" | null;
@@ -134,8 +136,13 @@ export type FrameView = Frame & {
   status: FrameStatus;
   approvedVersion: FrameVersion | null;
   latestVersion: FrameVersion | null;
+  currentVersion: FrameVersion | null;
   queuedJobs: number;
   nextAction: FrameNextAction;
+  dependsOnPreviousFrame: boolean;
+  blockedByFrameId: string | null;
+  downstreamImpactCount: number;
+  queueRank: number;
   disabledReason: string | null;
 };
 
@@ -148,6 +155,9 @@ export type TransitionView = Transition & {
   latestVideoVersion: TransitionVersion | null;
   isStale: boolean;
   nextAction: TransitionNextAction;
+  blockedByFrameIds: string[];
+  downstreamImpactCount: number;
+  queueRank: number;
   disabledReason: string | null;
 };
 

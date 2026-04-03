@@ -28,16 +28,14 @@ import { enqueueFrameGeneration, enqueueTransitionGeneration } from "./job-runne
 import { readProjectSnapshot, saveManifest, setCurrentProjectPath } from "./project-store";
 import type { Frame, FrameVersion, ProjectManifest } from "./types";
 
-function createFrame(title: string, position: number): Frame {
+function createFrame(name: string, position: number): Frame {
   const timestamp = nowIso();
   return {
     id: createId("frame"),
     position,
-    title,
-    imagePrompt: `${title} prompt`,
+    imagePrompt: `${name} prompt`,
     referenceImages: [],
     usePreviousFrameAsReference: false,
-    notes: "",
     approvedVersionId: null,
     versions: [],
     createdAt: timestamp,
@@ -45,7 +43,10 @@ function createFrame(title: string, position: number): Frame {
   };
 }
 
-function createFrameVersion(outputPath: string): FrameVersion {
+function createFrameVersion(
+  outputPath: string,
+  overrides: Partial<FrameVersion> = {},
+): FrameVersion {
   const id = createId("framever");
   return {
     id,
@@ -57,6 +58,11 @@ function createFrameVersion(outputPath: string): FrameVersion {
     createdAt: nowIso(),
     reviewerDecision: "unreviewed" as const,
     reviewerNotes: "",
+    sourcePrompt: null,
+    usePreviousFrameAsReference: null,
+    dependencyFrameId: null,
+    dependencyVersionId: null,
+    ...overrides,
   };
 }
 
@@ -168,7 +174,6 @@ describe("frame job anchoring", () => {
       }),
     );
   });
-
 
   test("does not error when previous-frame anchoring is enabled on the first frame", async () => {
     const projectPath = await createTempProject();
@@ -314,7 +319,7 @@ describe("frame job anchoring", () => {
       return draft;
     });
 
-    await enqueueFrameGeneration([manifest.frames.find((frame) => frame.title === "Third")!.id], {
+    await enqueueFrameGeneration([manifest.frames[2]!.id], {
       candidateCount: 1,
       size: "1280x720",
       seedMode: "random",
@@ -413,6 +418,112 @@ describe("frame job anchoring", () => {
         fromImagePath: fromOutputPath,
         toImagePath: toOutputPath,
         prompt: "Match cut",
+      }),
+    );
+  });
+
+  test("stale dependent frames are not treated as current transition endpoints", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const second = createFrame("Second", 1);
+      second.usePreviousFrameAsReference = true;
+
+      const firstOld = createFrameVersion(path.join("frames", "first", "old.png"));
+      const firstNew = createFrameVersion(path.join("frames", "first", "new.png"));
+      const secondApproved = createFrameVersion(path.join("frames", "second", "approved.png"), {
+        sourcePrompt: second.imagePrompt,
+        usePreviousFrameAsReference: true,
+        dependencyFrameId: first.id,
+        dependencyVersionId: firstOld.id,
+      });
+
+      first.versions.push(firstOld, firstNew);
+      first.approvedVersionId = firstNew.id;
+      second.versions.push(secondApproved);
+      second.approvedVersionId = secondApproved.id;
+      draft.frames = [first, second];
+      reconcileTransitions(draft);
+      draft.transitions[0]!.transitionPrompt = "Crossfade";
+      return draft;
+    });
+
+    await expect(
+      enqueueTransitionGeneration([manifest.transitions[0]!.id], {
+        duration: 4,
+        size: "1280x720",
+        fps: 24,
+      }),
+    ).rejects.toThrow(/Both endpoint frames need at least one generated version/i);
+  });
+
+  test("transition generation uses refreshed current endpoints after the chain is repaired", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    const firstOldPath = path.join("frames", "first", "old.png");
+    const firstNewPath = path.join("frames", "first", "new.png");
+    const secondOldPath = path.join("frames", "second", "old.png");
+    const secondNewPath = path.join("frames", "second", "new.png");
+
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const second = createFrame("Second", 1);
+      second.usePreviousFrameAsReference = true;
+
+      const firstOld = createFrameVersion(firstOldPath);
+      const firstNew = createFrameVersion(firstNewPath);
+      const secondOld = createFrameVersion(secondOldPath, {
+        sourcePrompt: second.imagePrompt,
+        usePreviousFrameAsReference: true,
+        dependencyFrameId: first.id,
+        dependencyVersionId: firstOld.id,
+      });
+      const secondNew = createFrameVersion(secondNewPath, {
+        sourcePrompt: second.imagePrompt,
+        usePreviousFrameAsReference: true,
+        dependencyFrameId: first.id,
+        dependencyVersionId: firstNew.id,
+      });
+
+      first.versions.push(firstOld, firstNew);
+      first.approvedVersionId = firstNew.id;
+      second.versions.push(secondOld, secondNew);
+      second.approvedVersionId = secondOld.id;
+      draft.frames = [first, second];
+      reconcileTransitions(draft);
+      draft.transitions[0]!.transitionPrompt = "Repair chain";
+      return draft;
+    });
+
+    const queuedSnapshot = await enqueueTransitionGeneration([manifest.transitions[0]!.id], {
+      duration: 4,
+      size: "1280x720",
+      fps: 24,
+    });
+
+    expect(queuedSnapshot.manifest.transitions[0]?.confirmedFromVersionId).toBe(
+      manifest.frames[0]!.approvedVersionId,
+    );
+    expect(queuedSnapshot.manifest.transitions[0]?.confirmedToVersionId).toBe(
+      manifest.frames[1]!.versions[1]!.id,
+    );
+    expect(queuedSnapshot.manifest.jobs.at(-1)?.requestPayload).toMatchObject({
+      fromApprovedVersionId: manifest.frames[0]!.approvedVersionId,
+      toApprovedVersionId: manifest.frames[1]!.versions[1]!.id,
+    });
+
+    await waitForTransitionJobToSettle(projectPath);
+
+    expect(generateTransitionVideoMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fromImagePath: firstNewPath,
+        toImagePath: secondNewPath,
+        prompt: "Repair chain",
       }),
     );
   });
