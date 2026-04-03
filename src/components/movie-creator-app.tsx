@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useEffectEvent, useRef, useState, useTransition } from "react";
+import { useEffect, useEffectEvent, useState, useTransition } from "react";
 import Image from "next/image";
 import {
   ActionIcon,
@@ -20,7 +20,6 @@ import {
   SimpleGrid,
   Stack,
   Switch,
-  Tabs,
   Text,
   TextInput,
   Textarea,
@@ -46,7 +45,6 @@ import {
   IconArrowsShuffle,
   IconChevronDown,
   IconDotsVertical,
-  IconLayoutList,
   IconLayoutSidebarRightExpand,
   IconPlayerPlay,
   IconSparkles,
@@ -86,6 +84,10 @@ function assetUrl(relativePath: string | null | undefined) {
   }
 
   return `/api/assets?path=${encodeURIComponent(relativePath)}`;
+}
+
+function frameLabel(frame: Pick<FrameView, "position">) {
+  return `Frame ${frame.position + 1}`;
 }
 
 function frameStatusLabel(frame: FrameView) {
@@ -133,6 +135,37 @@ function framePrimaryActionLabel(frame: FrameView) {
     default:
       return null;
   }
+}
+
+function frameVersionDecisionColor(frame: FrameView, versionId: string, reviewerDecision: string) {
+  if (frame.approvedVersionId === versionId) {
+    return "teal";
+  }
+
+  if (reviewerDecision === "rejected") {
+    return "red";
+  }
+
+  return "gray";
+}
+
+function frameVersionDecisionLabel(frame: FrameView, versionId: string, reviewerDecision: string) {
+  if (frame.approvedVersionId === versionId) {
+    return "Approved";
+  }
+
+  if (reviewerDecision === "rejected") {
+    return "Rejected";
+  }
+
+  return "Available";
+}
+
+function formatVersionTimestamp(createdAt: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(createdAt));
 }
 
 function transitionWorkflowLabel(transition: TransitionView) {
@@ -343,7 +376,7 @@ function FrameCard({ frame, selected, onSelect, onPrimaryAction, onDelete, onZoo
           <ZoomableThumb
             src={previewVersion?.thumbnailPath}
             zoomSrc={previewVersion?.outputPath}
-            alt={frame.title || `Frame ${frame.position + 1}`}
+            alt={frameLabel(frame)}
             emptyLabel={isGenerating ? "Preparing…" : "No image"}
             sizes="160px"
             width={160}
@@ -372,14 +405,6 @@ function FrameCard({ frame, selected, onSelect, onPrimaryAction, onDelete, onZoo
         </Box>
         <Stack gap="xs" style={{ flex: 1, minWidth: 0 }}>
           <Group justify="space-between" align="flex-start" wrap="nowrap">
-            <Box style={{ minWidth: 0 }}>
-              <Text fw={700} size="sm" truncate>
-                {frame.title || `Frame ${frame.position + 1}`}
-              </Text>
-              <Text c="dimmed" size="xs">
-                {frame.id}
-              </Text>
-            </Box>
             <Group gap="xs" wrap="nowrap">
               <Badge color={frameStatusColor(frame)}>
                 {frameStatusLabel(frame)}
@@ -458,7 +483,9 @@ function TransitionCard({
 }: TransitionCardProps) {
   const fromPreview = transition.fromFrame.approvedVersion ?? transition.fromFrame.latestVersion;
   const toPreview = transition.toFrame.approvedVersion ?? transition.toFrame.latestVersion;
+  const previewVideo = transition.approvedVideoVersion ?? transition.latestVideoVersion;
   const primaryActionLabel = transitionPrimaryActionLabel(transition);
+  const showListPrimaryAction = transition.nextAction !== "write_prompt";
 
   return (
     <Card
@@ -476,31 +503,75 @@ function TransitionCard({
       onClick={onSelect}
     >
       <Group align="flex-start" wrap="nowrap" gap="md">
-        <SimpleGrid cols={2} spacing="xs" style={{ width: 220, flex: "0 0 220px" }}>
-          <ZoomableThumb
-            src={fromPreview?.thumbnailPath}
-            zoomSrc={fromPreview?.outputPath}
-            alt={transition.fromFrame.title || "From frame"}
-            emptyLabel="Pending"
-            sizes="104px"
-            width={104}
-            onZoom={onZoom}
-          />
-          <ZoomableThumb
-            src={toPreview?.thumbnailPath}
-            zoomSrc={toPreview?.outputPath}
-            alt={transition.toFrame.title || "To frame"}
-            emptyLabel="Pending"
-            sizes="104px"
-            width={104}
-            onZoom={onZoom}
-          />
-        </SimpleGrid>
+        {previewVideo ? (
+          <Box style={{ width: 220, flex: "0 0 220px" }}>
+            <Box
+              style={{
+                aspectRatio: "16 / 9",
+                overflow: "hidden",
+                borderRadius: 12,
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid rgba(255,255,255,0.06)",
+                position: "relative",
+              }}
+            >
+              <video
+                muted
+                loop
+                autoPlay
+                playsInline
+                preload="metadata"
+                poster={assetUrl(previewVideo.posterPath) || undefined}
+                src={assetUrl(previewVideo.outputPath)}
+                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                }}
+              />
+              <Group
+                gap={4}
+                style={{
+                  position: "absolute",
+                  right: 8,
+                  bottom: 8,
+                  padding: "4px 6px",
+                  borderRadius: 999,
+                  background: "rgba(8, 12, 18, 0.72)",
+                  color: "white",
+                  pointerEvents: "none",
+                }}
+              >
+                <IconPlayerPlay size={12} />
+                <Text size="xs" fw={600}>
+                  Preview
+                </Text>
+              </Group>
+            </Box>
+          </Box>
+        ) : (
+          <SimpleGrid cols={2} spacing="xs" style={{ width: 220, flex: "0 0 220px" }}>
+            <ZoomableThumb
+              src={fromPreview?.thumbnailPath}
+              zoomSrc={fromPreview?.outputPath}
+              alt={frameLabel(transition.fromFrame)}
+              emptyLabel="Pending"
+              sizes="104px"
+              width={104}
+              onZoom={onZoom}
+            />
+            <ZoomableThumb
+              src={toPreview?.thumbnailPath}
+              zoomSrc={toPreview?.outputPath}
+              alt={frameLabel(transition.toFrame)}
+              emptyLabel="Pending"
+              sizes="104px"
+              width={104}
+              onZoom={onZoom}
+            />
+          </SimpleGrid>
+        )}
         <Stack gap="xs" style={{ flex: 1, minWidth: 0 }}>
           <Group justify="space-between" align="flex-start" wrap="nowrap">
-            <Text fw={600} size="sm" style={{ flex: 1 }} lineClamp={2}>
-              {transition.fromFrame.title || "Untitled"} to {transition.toFrame.title || "Untitled"}
-            </Text>
             <Group gap="xs" wrap="nowrap">
               <Badge color={transitionWorkflowColor(transition)}>
                 {transitionWorkflowLabel(transition)}
@@ -520,7 +591,7 @@ function TransitionCard({
               {transition.versions.length} candidate{transition.versions.length === 1 ? "" : "s"}
             </Text>
             <Group gap="xs">
-              {selected && primaryActionLabel ? (
+              {selected && showListPrimaryAction && primaryActionLabel ? (
                 <Button
                   size="compact-sm"
                   variant={transition.nextAction === "review" ? "filled" : "light"}
@@ -567,6 +638,78 @@ type ReviewModalProps = {
   onClose: () => void;
   onApprove: (versionId: string) => Promise<void>;
 };
+
+type FrameAlternativesProps = {
+  frame: FrameView;
+  onApprove: (versionId: string) => Promise<void>;
+  onZoom: (target: ZoomTarget) => void;
+};
+
+function FrameAlternatives({ frame, onApprove, onZoom }: FrameAlternativesProps) {
+  const versions = [...frame.versions].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+
+  if (!versions.length) {
+    return (
+      <Text c="dimmed" size="sm">
+        Generate this frame to add alternatives here.
+      </Text>
+    );
+  }
+
+  return (
+    <Stack gap="xs">
+      {versions.map((version, index) => {
+        const isApproved = frame.approvedVersionId === version.id;
+
+        return (
+          <Card
+            key={version.id}
+            withBorder
+            radius="md"
+            p="xs"
+            style={{
+              background: "rgba(15, 20, 28, 0.88)",
+              borderColor: isApproved ? "rgba(32, 201, 151, 0.5)" : "rgba(84, 96, 112, 0.3)",
+            }}
+          >
+            <Group align="flex-start" wrap="nowrap" gap="sm">
+              <ZoomableThumb
+                src={version.thumbnailPath}
+                zoomSrc={version.outputPath}
+                alt={`${frameLabel(frame)} candidate ${versions.length - index}`}
+                emptyLabel="No image"
+                sizes="112px"
+                width={112}
+                onZoom={onZoom}
+              />
+              <Stack gap={6} style={{ flex: 1, minWidth: 0 }}>
+                <Group gap="xs" wrap="wrap">
+                  <Badge color={frameVersionDecisionColor(frame, version.id, version.reviewerDecision)}>
+                    {frameVersionDecisionLabel(frame, version.id, version.reviewerDecision)}
+                  </Badge>
+                  <Text c="dimmed" size="xs">
+                    {formatVersionTimestamp(version.createdAt)}
+                  </Text>
+                </Group>
+                <Text c="dimmed" size="xs" lineClamp={2}>
+                  {version.model}
+                </Text>
+                <Button
+                  size="compact-sm"
+                  variant={isApproved ? "light" : "filled"}
+                  disabled={isApproved}
+                  onClick={() => void onApprove(version.id)}
+                >
+                  {isApproved ? "Approved" : "Set approved"}
+                </Button>
+              </Stack>
+            </Group>
+          </Card>
+        );
+      })}
+    </Stack>
+  );
+}
 
 function ReviewModal({ target, onClose, onApprove }: ReviewModalProps) {
   if (!target) {
@@ -661,16 +804,11 @@ export function MovieCreatorApp() {
   const [bulkInput, setBulkInput] = useState("");
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget>(null);
   const [zoomTarget, setZoomTarget] = useState<ZoomTarget | null>(null);
-  const [inspectorTab, setInspectorTab] = useState<"frame" | "transition">("frame");
   const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
   const [selectedTransitionId, setSelectedTransitionId] = useState<string | null>(null);
   const [segmentMoveTarget, setSegmentMoveTarget] = useState<TransitionView | null>(null);
   const [segmentIndex, setSegmentIndex] = useState(0);
   const [isPending, startTransition] = useTransition();
-  const previousSelectedFrameRef = useRef<{
-    id: string | null;
-    status: FrameView["status"] | null;
-  }>({ id: null, status: null });
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
   const normalizedProjectPath = projectPath.trim();
   const hasProjectPath = normalizedProjectPath.length > 0;
@@ -698,12 +836,22 @@ export function MovieCreatorApp() {
       const nextSelectedTransitionId =
         result.transitions.some((transition) => transition.id === result.manifest.ui.selectedTransitionId)
           ? result.manifest.ui.selectedTransitionId
-          : result.transitions[0]?.id ?? null;
-      setSelectedFrameId(nextSelectedFrameId);
-      setSelectedTransitionId(nextSelectedTransitionId);
-      setInspectorTab(nextSelectedFrameId ? "frame" : "transition");
-      window.localStorage.setItem("moviegen:lastProjectPath", pathValue);
-      notifications.show({ color: "teal", message: `Opened ${pathValue}` });
+          : null;
+
+      if (nextSelectedTransitionId) {
+        setSelectedFrameId(null);
+        setSelectedTransitionId(nextSelectedTransitionId);
+      } else if (nextSelectedFrameId) {
+        setSelectedFrameId(nextSelectedFrameId);
+        setSelectedTransitionId(null);
+      } else if (result.frames[0]) {
+        setSelectedFrameId(result.frames[0].id);
+        setSelectedTransitionId(null);
+      } else {
+        setSelectedFrameId(null);
+        setSelectedTransitionId(result.transitions[0]?.id ?? null);
+      }
+      notifications.show({ color: "teal", message: `Opened ${result.projectPath}` });
     } catch (error) {
       notifications.show({ color: "red", message: error instanceof Error ? error.message : "Open failed" });
     }
@@ -742,9 +890,13 @@ export function MovieCreatorApp() {
 
   const frames = snapshot?.frames ?? [];
   const transitions = snapshot?.transitions ?? [];
-  const selectedFrame = frames.find((frame) => frame.id === selectedFrameId) ?? frames[0] ?? null;
-  const selectedTransition =
-    transitions.find((transition) => transition.id === selectedTransitionId) ?? transitions[0] ?? null;
+  const selectedFrame = selectedFrameId
+    ? frames.find((frame) => frame.id === selectedFrameId) ?? null
+    : null;
+  const selectedTransition = selectedTransitionId
+    ? transitions.find((transition) => transition.id === selectedTransitionId) ?? null
+    : null;
+  const activeInspector = selectedTransition ? "transition" : selectedFrame ? "frame" : null;
   const selectedFrameCanUsePreviousReference = (selectedFrame?.position ?? 0) > 0;
 
   async function mutate<T extends ApiResult>(url: string, init: RequestInit, successMessage?: string) {
@@ -813,14 +965,12 @@ export function MovieCreatorApp() {
   function selectFrame(frameId: string) {
     setSelectedFrameId(frameId);
     setSelectedTransitionId(null);
-    setInspectorTab("frame");
     persistUiState({ selectedFrameId: frameId, selectedTransitionId: null, inspectorOpen: true });
   }
 
   function selectTransition(transitionId: string) {
     setSelectedTransitionId(transitionId);
     setSelectedFrameId(null);
-    setInspectorTab("transition");
     persistUiState({ selectedTransitionId: transitionId, selectedFrameId: null, inspectorOpen: true });
   }
 
@@ -841,15 +991,24 @@ export function MovieCreatorApp() {
   const transitionsReadyToGenerate = transitions.filter((transition) => transition.nextAction === "generate");
   const transitionsNeedingReview = transitions.filter((transition) => transition.nextAction === "review");
 
+  async function generateFrameAlternative(frame: FrameView) {
+    selectFrame(frame.id);
+    await mutate(
+      `/api/frames/${frame.id}/generate`,
+      { method: "POST" },
+      "Queued frame generation",
+    );
+  }
+
+  async function approveFrameVersion(versionId: string) {
+    await mutate(`/api/frame-versions/${versionId}/approve`, { method: "POST" }, "Approved version");
+  }
+
   async function runFramePrimaryAction(frame: FrameView) {
     selectFrame(frame.id);
 
     if (frame.nextAction === "generate") {
-      await mutate(
-        `/api/frames/${frame.id}/generate`,
-        { method: "POST" },
-        "Queued frame generation",
-      );
+      await generateFrameAlternative(frame);
       return;
     }
 
@@ -936,34 +1095,6 @@ export function MovieCreatorApp() {
     notifications.show({ color: "gray", message: "No ready batch work to process." });
   }
 
-  useEffect(() => {
-    const previous = previousSelectedFrameRef.current;
-    let reviewTimeout: number | null = null;
-
-    if (
-      selectedFrame &&
-      previous.id === selectedFrame.id &&
-      (previous.status === "queued" || previous.status === "generating") &&
-      selectedFrame.nextAction === "review" &&
-      !reviewTarget
-    ) {
-      reviewTimeout = window.setTimeout(() => {
-        setReviewTarget({ type: "frame", frame: selectedFrame });
-      }, 0);
-    }
-
-    previousSelectedFrameRef.current = {
-      id: selectedFrame?.id ?? null,
-      status: selectedFrame?.status ?? null,
-    };
-
-    return () => {
-      if (reviewTimeout !== null) {
-        window.clearTimeout(reviewTimeout);
-      }
-    };
-  }, [reviewTarget, selectedFrame]);
-
   return (
     <>
       <AppShell
@@ -1011,408 +1142,393 @@ export function MovieCreatorApp() {
         </AppShell.Header>
 
         <AppShell.Navbar p="md" style={{ minHeight: 0, overflowY: "auto" }}>
-          <Stack gap="md" h="100%">
-            <Card withBorder radius="lg" p="md">
-              <Stack gap="sm">
-                <Text fw={600}>Bulk frame entry</Text>
-                <Textarea
-                  minRows={10}
-                  maxRows={16}
-                  value={bulkInput}
-                  onChange={(event) => setBulkInput(event.currentTarget.value)}
-                  placeholder="One prompt per line"
-                />
-                <Button
-                  leftSection={<IconSparkles size={16} />}
-                  onClick={() => {
-                    const rows = bulkInput
-                      .split("\n")
-                      .map((line) => line.trim())
-                      .filter(Boolean)
-                      .map((imagePrompt) => ({ imagePrompt }));
-                    if (!rows.length) {
-                      return;
-                    }
-                    void mutate(
-                      "/api/frames/bulk-create",
-                      {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ rows }),
-                      },
-                      `Created ${rows.length} frames`,
-                    );
-                    setBulkInput("");
-                  }}
-                >
-                  Create frames
-                </Button>
-              </Stack>
-            </Card>
+          {snapshot ? (
+            <Stack gap="md" h="100%">
+              <Card withBorder radius="lg" p="md">
+                <Stack gap="sm">
+                  <Text fw={600}>Bulk frame entry</Text>
+                  <Textarea
+                    minRows={10}
+                    maxRows={16}
+                    value={bulkInput}
+                    onChange={(event) => setBulkInput(event.currentTarget.value)}
+                    placeholder="One prompt per line"
+                  />
+                  <Button
+                    leftSection={<IconSparkles size={16} />}
+                    onClick={() => {
+                      const rows = bulkInput
+                        .split("\n")
+                        .map((line) => line.trim())
+                        .filter(Boolean)
+                        .map((imagePrompt) => ({ imagePrompt }));
+                      if (!rows.length) {
+                        return;
+                      }
+                      void mutate(
+                        "/api/frames/bulk-create",
+                        {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ rows }),
+                        },
+                        `Created ${rows.length} frames`,
+                      );
+                      setBulkInput("");
+                    }}
+                  >
+                    Create frames
+                  </Button>
+                </Stack>
+              </Card>
 
-            <Card withBorder radius="lg" p="md">
-              <Stack gap="sm">
-                <Text fw={600}>Filters</Text>
-                <SegmentedControl
-                  fullWidth
-                  value={filter}
-                  onChange={(value) => persistUiState({ filter: value })}
-                  data={[
-                    { label: "All", value: "all" },
-                    { label: "Attention", value: "needsAttention" },
-                    { label: "Approved", value: "approved" },
-                  ]}
-                />
-              </Stack>
-            </Card>
+              <Card withBorder radius="lg" p="md">
+                <Stack gap="sm">
+                  <Text fw={600}>Filters</Text>
+                  <SegmentedControl
+                    fullWidth
+                    value={filter}
+                    onChange={(value) => persistUiState({ filter: value })}
+                    data={[
+                      { label: "All", value: "all" },
+                      { label: "Attention", value: "needsAttention" },
+                      { label: "Approved", value: "approved" },
+                    ]}
+                  />
+                </Stack>
+              </Card>
 
-            <Card withBorder radius="lg" p="md">
-              <Stack gap="sm">
-                <Group justify="space-between">
-                  <Text fw={600}>Up next</Text>
-                  <Text c="dimmed" size="xs">
-                    {frames.length} frames
+              <Card withBorder radius="lg" p="md">
+                <Stack gap="sm">
+                  <Group justify="space-between">
+                    <Text fw={600}>Up next</Text>
+                    <Text c="dimmed" size="xs">
+                      {frames.length} frames
+                    </Text>
+                  </Group>
+                  <Text c="dimmed" size="sm">
+                    {framesNeedingGeneration.length} frames need generation
                   </Text>
-                </Group>
+                  <Text c="dimmed" size="sm">
+                    {framesNeedingReview.length} frames need review
+                  </Text>
+                  <Text c="dimmed" size="sm">
+                    {transitionsNeedingPrompt.length} transitions need prompts
+                  </Text>
+                  <Text c="dimmed" size="sm">
+                    {transitionsReadyToGenerate.length} transitions are ready to generate
+                  </Text>
+                  <Text c="dimmed" size="sm">
+                    {transitionsNeedingReview.length} transitions need review
+                  </Text>
+                  <Button leftSection={<IconWand size={16} />} variant="light" onClick={() => void doNextAction()}>
+                    Do next
+                  </Button>
+                  <Button
+                    leftSection={<IconPlayerPlay size={16} />}
+                    variant="light"
+                    onClick={() => void processReadyItems()}
+                    disabled={!framesNeedingGeneration.length && !transitionsReadyToGenerate.length}
+                  >
+                    Process ready items
+                  </Button>
+                  <Button variant="subtle" onClick={() => void refreshProject()}>
+                    Refresh
+                  </Button>
+                </Stack>
+              </Card>
+            </Stack>
+          ) : (
+            <Card withBorder radius="lg" p="md">
+              <Stack gap="sm">
+                <Text fw={600}>Workspace locked</Text>
                 <Text c="dimmed" size="sm">
-                  {framesNeedingGeneration.length} frames need generation
+                  {hasProjectPath
+                    ? "Open the project path in the top bar to enable editing."
+                    : "Enter a local project path in the top bar to enable editing."}
                 </Text>
-                <Text c="dimmed" size="sm">
-                  {framesNeedingReview.length} frames need review
-                </Text>
-                <Text c="dimmed" size="sm">
-                  {transitionsNeedingPrompt.length} transitions need prompts
-                </Text>
-                <Text c="dimmed" size="sm">
-                  {transitionsReadyToGenerate.length} transitions are ready to generate
-                </Text>
-                <Text c="dimmed" size="sm">
-                  {transitionsNeedingReview.length} transitions need review
-                </Text>
-                <Button leftSection={<IconWand size={16} />} variant="light" onClick={() => void doNextAction()}>
-                  Do next
-                </Button>
-                <Button
-                  leftSection={<IconPlayerPlay size={16} />}
-                  variant="light"
-                  onClick={() => void processReadyItems()}
-                  disabled={!framesNeedingGeneration.length && !transitionsReadyToGenerate.length}
-                >
-                  Process ready items
-                </Button>
-                <Button variant="subtle" onClick={() => void refreshProject()}>
-                  Refresh
-                </Button>
               </Stack>
             </Card>
-          </Stack>
+          )}
         </AppShell.Navbar>
 
         <AppShell.Aside p="md" style={{ minHeight: 0, overflowY: "auto" }}>
-          <Stack gap="md" h="100%">
-            <Group justify="space-between">
-              <Text fw={600}>Inspector</Text>
-              <ActionIcon
-                variant="light"
-                onClick={() => persistUiState({ inspectorOpen: false })}
-                aria-label="Collapse inspector"
-              >
-                <IconLayoutSidebarRightExpand size={16} />
-              </ActionIcon>
-            </Group>
+          {snapshot ? (
+            <Stack gap="md" h="100%">
+              <Group justify="space-between">
+                <Text fw={600}>Inspector</Text>
+                <ActionIcon
+                  variant="light"
+                  onClick={() => persistUiState({ inspectorOpen: false })}
+                  aria-label="Collapse inspector"
+                >
+                  <IconLayoutSidebarRightExpand size={16} />
+                </ActionIcon>
+              </Group>
 
-            <Tabs value={inspectorTab} onChange={(value) => setInspectorTab((value as "frame" | "transition") ?? "frame")} flex={1}>
-              <Tabs.List>
-                <Tabs.Tab value="frame" leftSection={<IconLayoutList size={14} />}>
-                  Frame
-                </Tabs.Tab>
-                <Tabs.Tab value="transition" leftSection={<IconPlayerPlay size={14} />}>
-                  Transition
-                </Tabs.Tab>
-              </Tabs.List>
-
-              <Tabs.Panel value="frame" pt="md">
-                {selectedFrame ? (
-                  <Stack gap="sm">
-                    <TextInput
-                      label="Title"
-                      value={selectedFrame.title}
-                      onChange={(event) =>
-                        setSnapshot((current) =>
-                          current
-                            ? {
-                                ...current,
-                                frames: current.frames.map((frame) =>
-                                  frame.id === selectedFrame.id ? { ...frame, title: event.currentTarget.value } : frame,
-                                ),
-                              }
-                            : current,
-                        )
-                      }
-                      onBlur={(event) =>
-                        void mutate(
-                          `/api/frames/${selectedFrame.id}`,
-                          {
-                            method: "PATCH",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ title: event.currentTarget.value }),
-                          },
-                          "Frame updated",
-                        )
-                      }
-                    />
-                    <Textarea
-                      label="Image prompt"
-                      minRows={6}
-                      value={selectedFrame.imagePrompt}
-                      onChange={(event) =>
-                        setSnapshot((current) =>
-                          current
-                            ? {
-                                ...current,
-                                frames: current.frames.map((frame) =>
-                                  frame.id === selectedFrame.id ? { ...frame, imagePrompt: event.currentTarget.value } : frame,
-                                ),
-                              }
-                            : current,
-                        )
-                      }
-                      onBlur={(event) =>
-                        void mutate(
-                          `/api/frames/${selectedFrame.id}`,
-                          {
-                            method: "PATCH",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ imagePrompt: event.currentTarget.value }),
-                          },
-                          "Frame updated",
-                        )
-                      }
-                    />
-                    <Textarea
-                      label="Notes"
-                      minRows={4}
-                      value={selectedFrame.notes}
-                      onChange={(event) =>
-                        setSnapshot((current) =>
-                          current
-                            ? {
-                                ...current,
-                                frames: current.frames.map((frame) =>
-                                  frame.id === selectedFrame.id ? { ...frame, notes: event.currentTarget.value } : frame,
-                                ),
-                              }
-                            : current,
-                        )
-                      }
-                      onBlur={(event) =>
-                        void mutate(
-                          `/api/frames/${selectedFrame.id}`,
-                          {
-                            method: "PATCH",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ notes: event.currentTarget.value }),
-                          },
-                          "Frame updated",
-                        )
-                      }
-                    />
-                    <Switch
-                      label="Use previous frame as reference"
-                      checked={selectedFrame.usePreviousFrameAsReference}
-                      onChange={(event) => {
-                        const checked = event.currentTarget.checked;
-                        setSnapshot((current) =>
-                          current
-                            ? {
-                                ...current,
-                                manifest: {
-                                  ...current.manifest,
-                                  frames: current.manifest.frames.map((frame) =>
+              {activeInspector === "frame" ? (
+                <Box pt="md">
+                  {selectedFrame ? (
+                    <Stack gap="sm">
+                      <Text fw={600}>{frameLabel(selectedFrame)}</Text>
+                      <Textarea
+                        label="Image prompt"
+                        minRows={6}
+                        value={selectedFrame.imagePrompt}
+                        onChange={(event) => {
+                          const value = event.currentTarget.value;
+                          setSnapshot((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  frames: current.frames.map((frame) =>
+                                    frame.id === selectedFrame.id ? { ...frame, imagePrompt: value } : frame,
+                                  ),
+                                }
+                              : current,
+                          );
+                        }}
+                        onBlur={(event) => {
+                          const value = event.currentTarget.value;
+                          void mutate(
+                            `/api/frames/${selectedFrame.id}`,
+                            {
+                              method: "PATCH",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ imagePrompt: value }),
+                            },
+                            "Frame updated",
+                          );
+                        }}
+                      />
+                      <Switch
+                        label="Use previous frame as reference"
+                        checked={selectedFrame.usePreviousFrameAsReference}
+                        onChange={(event) => {
+                          const checked = event.currentTarget.checked;
+                          setSnapshot((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  manifest: {
+                                    ...current.manifest,
+                                    frames: current.manifest.frames.map((frame) =>
+                                      frame.id === selectedFrame.id
+                                        ? { ...frame, usePreviousFrameAsReference: checked }
+                                        : frame,
+                                    ),
+                                  },
+                                  frames: current.frames.map((frame) =>
                                     frame.id === selectedFrame.id
                                       ? { ...frame, usePreviousFrameAsReference: checked }
                                       : frame,
                                   ),
-                                },
-                                frames: current.frames.map((frame) =>
-                                  frame.id === selectedFrame.id
-                                    ? { ...frame, usePreviousFrameAsReference: checked }
-                                    : frame,
-                                ),
-                              }
-                            : current,
-                        );
-                        void mutate(
-                          `/api/frames/${selectedFrame.id}`,
-                          {
-                            method: "PATCH",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ usePreviousFrameAsReference: checked }),
-                          },
-                          "Frame updated",
-                        );
-                      }}
-                    />
+                                }
+                              : current,
+                          );
+                          void mutate(
+                            `/api/frames/${selectedFrame.id}`,
+                            {
+                              method: "PATCH",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ usePreviousFrameAsReference: checked }),
+                            },
+                            "Frame updated",
+                          );
+                        }}
+                      />
                     <Text c="dimmed" size="xs">
                       {selectedFrameCanUsePreviousReference
                         ? "When enabled, generation uses the previous frame's approved image, or its latest candidate if nothing is approved yet."
                         : "This frame has no previous frame yet, so no previous-frame reference will be added."}
                     </Text>
+                    <Stack gap="xs">
+                      <Group justify="space-between" align="center">
+                        <Text fw={600} size="sm">
+                          Available frames
+                        </Text>
+                        <Text c="dimmed" size="xs">
+                          {selectedFrame.versions.length} candidate{selectedFrame.versions.length === 1 ? "" : "s"}
+                        </Text>
+                      </Group>
+                      <FrameAlternatives
+                        frame={selectedFrame}
+                        onApprove={approveFrameVersion}
+                        onZoom={setZoomTarget}
+                      />
+                    </Stack>
                     <Group justify="space-between" align="center">
                       <Badge color={frameStatusColor(selectedFrame)}>
                         {frameStatusLabel(selectedFrame)}
                       </Badge>
-                      {selectedFrame.disabledReason ? (
-                        <Text c="dimmed" size="xs">
-                          {selectedFrame.disabledReason}
-                        </Text>
-                      ) : null}
+                        {selectedFrame.disabledReason ? (
+                          <Text c="dimmed" size="xs">
+                            {selectedFrame.disabledReason}
+                          </Text>
+                        ) : null}
                     </Group>
                     <Group grow>
-                      {framePrimaryActionLabel(selectedFrame) ? (
-                        <Button onClick={() => void runFramePrimaryAction(selectedFrame)}>
-                          {framePrimaryActionLabel(selectedFrame)}
-                        </Button>
-                      ) : (
-                        <Button disabled>No action required</Button>
-                      )}
+                      <Button
+                        onClick={() => void generateFrameAlternative(selectedFrame)}
+                        disabled={selectedFrame.status === "queued" || selectedFrame.status === "generating"}
+                      >
+                        {selectedFrame.status === "queued"
+                          ? "Queued…"
+                          : selectedFrame.status === "generating"
+                            ? "Generating…"
+                            : "Generate"}
+                      </Button>
                       <Menu withinPortal position="bottom-end">
                         <Menu.Target>
                           <Button variant="light">More</Button>
-                        </Menu.Target>
-                        <Menu.Dropdown>
-                          <Menu.Item
-                            color="red"
-                            leftSection={<IconTrash size={14} />}
-                            onClick={() => void deleteFrame(selectedFrame.id)}
-                          >
-                            Delete frame
-                          </Menu.Item>
-                        </Menu.Dropdown>
-                      </Menu>
-                    </Group>
-                  </Stack>
-                ) : (
-                  <Text c="dimmed" size="sm">
-                    Select a frame to edit title, prompt, and notes.
-                  </Text>
-                )}
-              </Tabs.Panel>
+                          </Menu.Target>
+                          <Menu.Dropdown>
+                            <Menu.Item
+                              color="red"
+                              leftSection={<IconTrash size={14} />}
+                              onClick={() => void deleteFrame(selectedFrame.id)}
+                            >
+                              Delete frame
+                            </Menu.Item>
+                          </Menu.Dropdown>
+                        </Menu>
+                      </Group>
+                    </Stack>
+                  ) : (
+                    <Text c="dimmed" size="sm">
+                      Select a frame to edit its prompt and generation settings.
+                    </Text>
+                  )}
+                </Box>
+              ) : null}
 
-	              <Tabs.Panel value="transition" pt="md">
-	                {selectedTransition ? (
-	                  <Stack gap="sm">
-	                    {selectedTransition.approvedVideoVersion ?? selectedTransition.latestVideoVersion ? (
-	                      <Box
-	                        style={{
-	                          aspectRatio: "16 / 9",
-	                          overflow: "hidden",
-	                          borderRadius: 12,
-	                          background: "rgba(255,255,255,0.04)",
-	                        }}
-	                      >
-	                        <video
-	                          controls
-	                          playsInline
-	                          preload="metadata"
-	                          poster={assetUrl(
-	                            (selectedTransition.approvedVideoVersion ?? selectedTransition.latestVideoVersion)
-	                              ?.posterPath,
-	                          ) || undefined}
-	                          src={assetUrl(
-	                            (selectedTransition.approvedVideoVersion ?? selectedTransition.latestVideoVersion)
-	                              ?.outputPath,
-	                          )}
-	                          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-	                        />
-	                      </Box>
-	                    ) : null}
-	                    <Textarea
-	                      label="Transition prompt"
-	                      minRows={6}
-                      value={selectedTransition.transitionPrompt}
-                      onChange={(event) =>
-                        setSnapshot((current) =>
-                          current
-                            ? {
-                                ...current,
-                                transitions: current.transitions.map((transition) =>
-                                  transition.id === selectedTransition.id
-                                    ? { ...transition, transitionPrompt: event.currentTarget.value }
-                                    : transition,
-                                ),
-                              }
-                            : current,
-                        )
-                      }
-                      onBlur={(event) =>
-                        void mutate(
-                          `/api/transitions/${selectedTransition.id}`,
-                          {
-                            method: "PATCH",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ transitionPrompt: event.currentTarget.value }),
-                          },
-                          "Transition updated",
-                        )
-                      }
-                    />
-	                    <Group justify="space-between" align="center">
-	                      <Badge color={transitionWorkflowColor(selectedTransition)}>
-	                        {transitionWorkflowLabel(selectedTransition)}
-	                      </Badge>
+              {activeInspector === "transition" ? (
+                <Box pt="md">
+                  {selectedTransition ? (
+                    <Stack gap="sm">
+                      {selectedTransition.approvedVideoVersion ?? selectedTransition.latestVideoVersion ? (
+                        <Box
+                          style={{
+                            aspectRatio: "16 / 9",
+                            overflow: "hidden",
+                            borderRadius: 12,
+                            background: "rgba(255,255,255,0.04)",
+                          }}
+                        >
+                          <video
+                            controls
+                            playsInline
+                            preload="metadata"
+                            poster={assetUrl(
+                              (selectedTransition.approvedVideoVersion ?? selectedTransition.latestVideoVersion)
+                                ?.posterPath,
+                            ) || undefined}
+                            src={assetUrl(
+                              (selectedTransition.approvedVideoVersion ?? selectedTransition.latestVideoVersion)
+                                ?.outputPath,
+                            )}
+                            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                          />
+                        </Box>
+                      ) : null}
+                      <Textarea
+                        label="Transition prompt"
+                        minRows={6}
+                        value={selectedTransition.transitionPrompt}
+                        onChange={(event) =>
+                          setSnapshot((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  transitions: current.transitions.map((transition) =>
+                                    transition.id === selectedTransition.id
+                                      ? { ...transition, transitionPrompt: event.currentTarget.value }
+                                      : transition,
+                                  ),
+                                }
+                              : current,
+                          )
+                        }
+                        onBlur={(event) =>
+                          void mutate(
+                            `/api/transitions/${selectedTransition.id}`,
+                            {
+                              method: "PATCH",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ transitionPrompt: event.currentTarget.value }),
+                            },
+                            "Transition updated",
+                          )
+                        }
+                      />
+                      <Group justify="space-between" align="center">
+                        <Badge color={transitionWorkflowColor(selectedTransition)}>
+                          {transitionWorkflowLabel(selectedTransition)}
+                        </Badge>
                         {selectedTransition.disabledReason ? (
                           <Text c="dimmed" size="xs">
                             {selectedTransition.disabledReason}
                           </Text>
                         ) : null}
-	                    </Group>
-                    <Group grow>
-                      {transitionPrimaryActionLabel(selectedTransition) ? (
-                        <Button onClick={() => void runTransitionPrimaryAction(selectedTransition)}>
-                          {transitionPrimaryActionLabel(selectedTransition)}
-                        </Button>
-                      ) : (
-                        <Button disabled>No action required</Button>
-                      )}
-                      <Menu withinPortal position="bottom-end">
-                        <Menu.Target>
-                          <Button variant="light">More</Button>
-                        </Menu.Target>
-                        <Menu.Dropdown>
-                          <Menu.Item
-                            leftSection={<IconArrowsShuffle size={14} />}
-                            onClick={() => {
-                              setSegmentMoveTarget(selectedTransition);
-                              setSegmentIndex(selectedTransition.fromFrame.position + 1);
-                            }}
-                          >
-                            Move pair
-                          </Menu.Item>
-                          <Menu.Item
-                            color="red"
-                            leftSection={<IconTrash size={14} />}
-                            onClick={() => void deleteTransition(selectedTransition.id)}
-                          >
-                            Delete transition
-                          </Menu.Item>
-                        </Menu.Dropdown>
-                      </Menu>
-                    </Group>
-                    {!selectedTransition.latestVideoVersion ? (
-                      <Text c="dimmed" size="sm">
-                        Generate a transition clip once the prompt and frame endpoints are ready.
-                      </Text>
-                    ) : null}
-                  </Stack>
-                ) : (
-                  <Text c="dimmed" size="sm">
-                    Select a transition to edit its prompt and generate video when ready.
-                  </Text>
-                )}
-              </Tabs.Panel>
-            </Tabs>
-          </Stack>
+                      </Group>
+                      <Group grow>
+                        {transitionPrimaryActionLabel(selectedTransition) ? (
+                          <Button onClick={() => void runTransitionPrimaryAction(selectedTransition)}>
+                            {transitionPrimaryActionLabel(selectedTransition)}
+                          </Button>
+                        ) : (
+                          <Button disabled>No action required</Button>
+                        )}
+                        <Menu withinPortal position="bottom-end">
+                          <Menu.Target>
+                            <Button variant="light">More</Button>
+                          </Menu.Target>
+                          <Menu.Dropdown>
+                            <Menu.Item
+                              leftSection={<IconArrowsShuffle size={14} />}
+                              onClick={() => {
+                                setSegmentMoveTarget(selectedTransition);
+                                setSegmentIndex(selectedTransition.fromFrame.position + 1);
+                              }}
+                            >
+                              Move pair
+                            </Menu.Item>
+                            <Menu.Item
+                              color="red"
+                              leftSection={<IconTrash size={14} />}
+                              onClick={() => void deleteTransition(selectedTransition.id)}
+                            >
+                              Delete transition
+                            </Menu.Item>
+                          </Menu.Dropdown>
+                        </Menu>
+                      </Group>
+                      {!selectedTransition.latestVideoVersion ? (
+                        <Text c="dimmed" size="sm">
+                          Generate a transition clip once the prompt and frame endpoints are ready.
+                        </Text>
+                      ) : null}
+                    </Stack>
+                  ) : (
+                    <Text c="dimmed" size="sm">
+                      Select a transition to edit its prompt and generate video when ready.
+                    </Text>
+                  )}
+                </Box>
+              ) : (
+                <Text c="dimmed" size="sm">
+                  Select a frame or transition to edit it in the inspector.
+                </Text>
+              )}
+            </Stack>
+          ) : (
+            <Stack gap="sm">
+              <Text fw={600}>Inspector</Text>
+              <Text c="dimmed" size="sm">
+                Open a project from the top bar before editing frames or transitions.
+              </Text>
+            </Stack>
+          )}
         </AppShell.Aside>
 
         <AppShell.Main style={{ minHeight: 0, overflow: "hidden" }}>
