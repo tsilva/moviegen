@@ -42,7 +42,6 @@ import {
   IconPlus,
   IconSparkles,
   IconTrash,
-  IconWand,
   IconZoomIn,
 } from "@tabler/icons-react";
 import type {
@@ -60,7 +59,6 @@ import {
   getSequenceNextStep,
   getSequenceOverviewStats,
   getTransitionCardMeta,
-  getTransitionDisplayPrompt,
   getTransitionLabel,
 } from "@/components/movie-creator-app.helpers";
 
@@ -647,7 +645,7 @@ function TransitionQueueCard({
 }: TransitionQueueCardProps) {
   const previewVideo = transition.currentVideo ?? transition.approvedVideoVersion ?? transition.latestVideoVersion;
   const isPending = transition.videoStatus === "queued" || transition.videoStatus === "generating";
-  const meta = getTransitionCardMeta(transition);
+  const meta = getTransitionCardMeta(transition, selectedGalleryTileId);
   const canGenerate =
     !isPending &&
     transition.blockedByFrameIds.length === 0 &&
@@ -805,7 +803,7 @@ function TransitionQueueCard({
                 selectedTileId={selectedGalleryTileId}
                 pending={isPending}
                 kind="transition"
-                getVersionLabel={() => getTransitionDisplayPrompt(transition)}
+                getVersionLabel={(version) => version.sourcePrompt?.trim() || "No transition prompt yet"}
                 addTileDisabled={!canGenerate}
                 addTileDescription={generateDisabledReason ?? undefined}
                 onSelectAdd={onGenerateFromGallery}
@@ -916,7 +914,6 @@ type SequenceOverviewProps = {
   movieIndex: number;
   moviePlaylist: MoviePlaylistEntry[];
   movieIsPlaying: boolean;
-  missingMovieTransitions: TransitionView[];
   movieVideoRef: RefObject<HTMLVideoElement | null>;
   onTogglePlayback: () => void;
   onSelectMovieClip: (index: number) => void;
@@ -940,7 +937,6 @@ function SequenceOverview({
   movieIndex,
   moviePlaylist,
   movieIsPlaying,
-  missingMovieTransitions,
   movieVideoRef,
   onTogglePlayback,
   onSelectMovieClip,
@@ -951,156 +947,35 @@ function SequenceOverview({
   onEnded,
 }: SequenceOverviewProps) {
   return (
-    <Card
-      withBorder
-      radius="xl"
-      p="md"
+    <Box
       style={{
         position: "sticky",
         top: 0,
         zIndex: 20,
-        background: "rgba(10, 16, 24, 0.92)",
-        backdropFilter: "blur(18px)",
-        borderColor: "rgba(84, 96, 112, 0.32)",
       }}
     >
-      <Stack gap="md">
-        <Flex gap="lg" wrap="wrap" align="stretch">
-          <Stack gap="md" style={{ flex: "1 1 360px", minWidth: 0 }}>
-            <Stack gap={4}>
-              <Title order={4}>Sequence Overview</Title>
-              <Text c="dimmed" size="sm">
-                Keep the current cut in view, see what is blocked, and take the next useful step without leaving the sequence.
-              </Text>
-            </Stack>
-
-            <Group gap="sm" align="stretch">
-              {[
-                {
-                  label: "Current Cut",
-                  value: `${currentClipCount}/${totalTransitionCount}`,
-                  description: totalTransitionCount === 1 ? "clip ready" : "clips ready",
-                },
-                {
-                  label: "Missing Input",
-                  value: String(missingInputCount),
-                  description: missingInputCount === 1 ? "prompt to add" : "prompts to add",
-                },
-                {
-                  label: "Ready To Generate",
-                  value: String(actionableGenerationCount),
-                  description: actionableGenerationCount === 1 ? "item waiting" : "items waiting",
-                },
-                {
-                  label: "In Progress",
-                  value: String(inProgressCount),
-                  description: inProgressCount === 1 ? "job running" : "jobs running",
-                },
-              ].map((stat) => (
-                <Box
-                  key={stat.label}
-                  style={{
-                    flex: "1 1 120px",
-                    minWidth: 120,
-                    padding: 12,
-                    borderRadius: 14,
-                    border: "1px solid rgba(255,255,255,0.08)",
-                    background: "rgba(255,255,255,0.03)",
-                  }}
-                >
-                  <Text c="dimmed" size="xs" tt="uppercase" fw={700}>
-                    {stat.label}
-                  </Text>
-                  <Text fw={700} size="lg">
-                    {stat.value}
-                  </Text>
-                  <Text c="dimmed" size="xs">
-                    {stat.description}
-                  </Text>
-                </Box>
-              ))}
-            </Group>
-
-            <Box
-              style={{
-                padding: 14,
-                borderRadius: 16,
-                border: "1px solid rgba(78, 201, 240, 0.22)",
-                background: "rgba(26, 38, 51, 0.48)",
-              }}
-            >
-              <Group justify="space-between" align="flex-start" gap="md" wrap="nowrap">
-                <Stack gap={4} style={{ minWidth: 0, flex: 1 }}>
-                  <Text c="dimmed" size="xs" tt="uppercase" fw={700}>
-                    Next Up
-                  </Text>
-                  <Text fw={700}>{nextStepTitle}</Text>
-                  <Text c="dimmed" size="sm">
-                    {nextStepDescription}
-                  </Text>
-                </Stack>
-                {nextStepCtaLabel ? (
-                  <Button color="cyan" onClick={onNextStep}>
-                    {nextStepCtaLabel}
-                  </Button>
-                ) : null}
-              </Group>
-            </Box>
-          </Stack>
-
-          <Stack gap="sm" style={{ flex: "0 1 460px", minWidth: 320 }}>
-            <Group justify="space-between" align="flex-start">
-              <Stack gap={2}>
-                <Text fw={700}>Current Cut</Text>
-                <Text c="dimmed" size="sm">
-                  {missingMovieTransitions.length > 0
-                    ? `${missingMovieTransitions.length} transition${missingMovieTransitions.length === 1 ? "" : "s"} still missing a current clip.`
-                    : currentClipCount > 0
-                      ? "The current sequence is fully playable."
-                      : "Generate the first transition clip to start playback."}
-                </Text>
-              </Stack>
-              <Group gap="xs">
-                <Button
-                  size="xs"
-                  leftSection={
-                    movieIsPlaying ? <IconPlayerPause size={14} aria-hidden="true" /> : <IconPlayerPlay size={14} aria-hidden="true" />
-                  }
-                  disabled={!activeMovieClip}
-                  onClick={onTogglePlayback}
-                >
-                  {movieIsPlaying ? "Pause" : "Play"}
-                </Button>
-                <Button
-                  size="xs"
-                  variant="light"
-                  onClick={() => onSelectMovieClip(movieIndex - 1)}
-                  disabled={!moviePlaylist.length || movieIndex === 0}
-                >
-                  Previous
-                </Button>
-                <Button
-                  size="xs"
-                  variant="light"
-                  onClick={() => onSelectMovieClip(movieIndex + 1)}
-                  disabled={!moviePlaylist.length || movieIndex >= moviePlaylist.length - 1}
-                >
-                  Next
-                </Button>
-              </Group>
-            </Group>
-
+      <Stack gap="sm">
+        <Box
+          style={{
+            padding: 10,
+            borderRadius: 16,
+            border: "1px solid rgba(255,255,255,0.08)",
+            background: "rgba(255,255,255,0.03)",
+          }}
+        >
+          <Stack gap="xs">
             <Box
               style={{
                 borderRadius: 16,
                 overflow: "hidden",
                 border: "1px solid rgba(255,255,255,0.08)",
                 background: "rgba(255,255,255,0.03)",
+                boxShadow: "0 18px 40px rgba(0, 0, 0, 0.28)",
               }}
             >
               {activeMovieClip ? (
                 <Stack gap={0}>
-                  <Box style={{ aspectRatio: "16 / 9", background: "rgba(255,255,255,0.04)" }}>
+                  <Box style={{ aspectRatio: "16 / 9", minHeight: 220, background: "rgba(255,255,255,0.04)" }}>
                     <video
                       key={activeMovieClip.clipId}
                       ref={movieVideoRef}
@@ -1117,24 +992,130 @@ function SequenceOverview({
                     />
                   </Box>
                   <Box p="sm">
-                    <Text fw={700}>{activeMovieClip.label}</Text>
-                    <Text c="dimmed" size="sm">
+                    <Text fw={700} size="sm">
+                      {activeMovieClip.label}
+                    </Text>
+                    <Text c="dimmed" size="xs">
                       Clip {movieIndex + 1} of {moviePlaylist.length} · {activeMovieClip.model}
                     </Text>
                   </Box>
                 </Stack>
               ) : (
                 <Flex mih={220} align="center" justify="center" p="md">
-                  <Text c="dimmed" size="sm">
+                  <Text c="dimmed" size="sm" ta="center">
                     No current transition clips are ready yet.
                   </Text>
                 </Flex>
               )}
             </Box>
+
+            <Group gap="xs" grow>
+              <Button
+                size="xs"
+                leftSection={
+                  movieIsPlaying ? <IconPlayerPause size={14} aria-hidden="true" /> : <IconPlayerPlay size={14} aria-hidden="true" />
+                }
+                disabled={!activeMovieClip}
+                onClick={onTogglePlayback}
+              >
+                {movieIsPlaying ? "Pause" : "Play"}
+              </Button>
+              <Button
+                size="xs"
+                variant="light"
+                onClick={() => onSelectMovieClip(movieIndex - 1)}
+                disabled={!moviePlaylist.length || movieIndex === 0}
+              >
+                Prev
+              </Button>
+              <Button
+                size="xs"
+                variant="light"
+                onClick={() => onSelectMovieClip(movieIndex + 1)}
+                disabled={!moviePlaylist.length || movieIndex >= moviePlaylist.length - 1}
+              >
+                Next
+              </Button>
+            </Group>
           </Stack>
+        </Box>
+
+        <Box
+          style={{
+            padding: 12,
+            borderRadius: 16,
+            border: "1px solid rgba(78, 201, 240, 0.22)",
+            background: "rgba(26, 38, 51, 0.48)",
+          }}
+        >
+          <Stack gap="xs">
+            <Stack gap={2}>
+              <Text c="dimmed" size="xs" tt="uppercase" fw={700}>
+                Next Up
+              </Text>
+              <Text fw={700} size="sm">
+                {nextStepTitle}
+              </Text>
+              <Text c="dimmed" size="xs">
+                {nextStepDescription}
+              </Text>
+            </Stack>
+            {nextStepCtaLabel ? (
+              <Button color="cyan" size="xs" fullWidth onClick={onNextStep}>
+                {nextStepCtaLabel}
+              </Button>
+            ) : null}
+          </Stack>
+        </Box>
+
+        <Flex gap="xs" wrap="wrap" align="stretch">
+          {[
+            {
+              label: "Current Cut",
+              value: `${currentClipCount}/${totalTransitionCount}`,
+              description: totalTransitionCount === 1 ? "clip ready" : "clips ready",
+            },
+            {
+              label: "Missing Input",
+              value: String(missingInputCount),
+              description: missingInputCount === 1 ? "prompt to add" : "prompts to add",
+            },
+            {
+              label: "Ready",
+              value: String(actionableGenerationCount),
+              description: actionableGenerationCount === 1 ? "item waiting" : "items waiting",
+            },
+            {
+              label: "Running",
+              value: String(inProgressCount),
+              description: inProgressCount === 1 ? "job running" : "jobs running",
+            },
+          ].map((stat) => (
+            <Box
+              key={stat.label}
+              style={{
+                flex: "1 1 120px",
+                minWidth: 120,
+                padding: 10,
+                borderRadius: 14,
+                border: "1px solid rgba(255,255,255,0.08)",
+                background: "rgba(255,255,255,0.03)",
+              }}
+            >
+              <Text c="dimmed" size="xs" tt="uppercase" fw={700}>
+                {stat.label}
+              </Text>
+              <Text fw={700} size="lg">
+                {stat.value}
+              </Text>
+              <Text c="dimmed" size="xs">
+                {stat.description}
+              </Text>
+            </Box>
+          ))}
         </Flex>
       </Stack>
-    </Card>
+    </Box>
   );
 }
 
@@ -1381,7 +1362,6 @@ export function MovieCreatorApp({
       },
     ];
   });
-  const missingMovieTransitions = transitions.filter((transition) => transition.currentVideo == null);
   const movieIndex = moviePlaylist.length ? Math.min(movieCursor, moviePlaylist.length - 1) : 0;
   const activeMovieClip = moviePlaylist[movieIndex] ?? null;
   const movieIsPlaying = moviePlaying && activeMovieClip != null;
@@ -1605,68 +1585,6 @@ export function MovieCreatorApp({
     await runTransitionPrimaryAction(transition);
   }
 
-  async function generateReady() {
-    const framesNeedingGeneration = frames.filter((frame) => frame.nextAction === "generate");
-    const transitionsReadyToGenerate = transitions.filter((transition) => transition.nextAction === "generate");
-
-    if (!framesNeedingGeneration.length && !transitionsReadyToGenerate.length) {
-      notifications.show({ color: "gray", message: "There is nothing ready to generate." });
-      return;
-    }
-
-    for (const frame of framesNeedingGeneration) {
-      setSelectedGalleryTile("frame", frame.id, GALLERY_ADD_TILE_ID);
-    }
-
-    for (const transition of transitionsReadyToGenerate) {
-      setSelectedGalleryTile("transition", transition.id, GALLERY_ADD_TILE_ID);
-    }
-
-    const requests: Promise<unknown>[] = [];
-
-    if (framesNeedingGeneration.length) {
-      requests.push(
-        requestJson<ProjectSnapshot>("/api/frames/bulk-generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            frameIds: framesNeedingGeneration.map((frame) => frame.id),
-            candidateCount: 1,
-          }),
-        }),
-      );
-    }
-
-    if (transitionsReadyToGenerate.length) {
-      requests.push(
-        requestJson<ProjectSnapshot>("/api/transitions/bulk-generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            transitionIds: transitionsReadyToGenerate.map((transition) => transition.id),
-          }),
-        }),
-      );
-    }
-
-    const results = await Promise.allSettled(requests);
-    await refreshProject();
-
-    const errors = results
-      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
-      .map((result) => (result.reason instanceof Error ? result.reason.message : "Request failed"));
-
-    if (errors.length) {
-      notifications.show({ color: "red", message: errors.join(" ") });
-      return;
-    }
-
-    notifications.show({
-      color: "teal",
-      message: `Queued ${framesNeedingGeneration.length} frame${framesNeedingGeneration.length === 1 ? "" : "s"} and ${transitionsReadyToGenerate.length} transition${transitionsReadyToGenerate.length === 1 ? "" : "s"}.`,
-    });
-  }
-
   async function createFramesFromBulkInput() {
     const rows = bulkInput
       .split("\n")
@@ -1761,15 +1679,6 @@ export function MovieCreatorApp({
     setMovieCursor(boundedIndex);
   }
 
-  function playAllTransitions() {
-    if (!moviePlaylist.length) {
-      return;
-    }
-
-    setMovieCursor(0);
-    setMoviePlaying(true);
-  }
-
   function toggleMoviePlayback() {
     if (!activeMovieClip) {
       return;
@@ -1862,17 +1771,6 @@ export function MovieCreatorApp({
                     </Text>
                   </Box>
                   <Group gap="xs">
-                    <Button leftSection={<IconWand size={16} aria-hidden="true" />} onClick={() => void generateReady()}>
-                      Generate
-                    </Button>
-                    <Button
-                      variant="light"
-                      leftSection={<IconPlayerPlay size={16} aria-hidden="true" />}
-                      onClick={playAllTransitions}
-                      disabled={!moviePlaylist.length}
-                    >
-                      Play All
-                    </Button>
                     <Menu withinPortal position="bottom-end">
                       <Menu.Target>
                         <Button variant="light">Advanced</Button>
@@ -1898,38 +1796,9 @@ export function MovieCreatorApp({
                 </Group>
               </Card>
 
-              <Group gap="sm">
-                <Badge color="cyan" variant="light">
-                  Sequence Workspace
-                </Badge>
-              </Group>
-
-              <>
-                <SequenceOverview
-                  currentClipCount={overviewStats.currentClipCount}
-                  totalTransitionCount={overviewStats.totalTransitionCount}
-                  missingInputCount={overviewStats.missingInputCount}
-                  actionableGenerationCount={overviewStats.actionableGenerationCount}
-                  inProgressCount={overviewStats.inProgressCount}
-                  nextStepTitle={nextStep.title}
-                  nextStepDescription={nextStep.description}
-                  nextStepCtaLabel={nextStep.ctaLabel}
-                  activeMovieClip={activeMovieClip}
-                  movieIndex={movieIndex}
-                  moviePlaylist={moviePlaylist}
-                  movieIsPlaying={movieIsPlaying}
-                  missingMovieTransitions={missingMovieTransitions}
-                  movieVideoRef={movieVideoRef}
-                  onTogglePlayback={toggleMoviePlayback}
-                  onSelectMovieClip={selectMovieClip}
-                  onNextStep={() => void runNextStep()}
-                  onLoadedData={handleActiveMovieLoadedData}
-                  onPlay={() => setMoviePlaying(true)}
-                  onPause={handleActiveMoviePause}
-                  onEnded={handleActiveMovieEnded}
-                />
-
-                <DndContext
+              <Flex gap="md" align="flex-start" wrap="wrap">
+                <Box style={{ flex: "1 1 calc(70% - 8px)", minWidth: "min(720px, 100%)" }}>
+                  <DndContext
                     sensors={sensors}
                     collisionDetection={closestCenter}
                     onDragEnd={(event) => {
@@ -2063,10 +1932,36 @@ export function MovieCreatorApp({
                         ) : null}
                       </Stack>
                     </SortableContext>
-                </DndContext>
+                  </DndContext>
 
-                {isPending ? <Text c="dimmed">Applying reorder…</Text> : null}
-              </>
+                  {isPending ? <Text c="dimmed">Applying reorder…</Text> : null}
+                </Box>
+
+                <Box style={{ flex: "1 1 calc(30% - 8px)", minWidth: 320, maxWidth: 420, alignSelf: "stretch" }}>
+                  <SequenceOverview
+                    currentClipCount={overviewStats.currentClipCount}
+                    totalTransitionCount={overviewStats.totalTransitionCount}
+                    missingInputCount={overviewStats.missingInputCount}
+                    actionableGenerationCount={overviewStats.actionableGenerationCount}
+                    inProgressCount={overviewStats.inProgressCount}
+                    nextStepTitle={nextStep.title}
+                    nextStepDescription={nextStep.description}
+                    nextStepCtaLabel={nextStep.ctaLabel}
+                    activeMovieClip={activeMovieClip}
+                    movieIndex={movieIndex}
+                    moviePlaylist={moviePlaylist}
+                    movieIsPlaying={movieIsPlaying}
+                    movieVideoRef={movieVideoRef}
+                    onTogglePlayback={toggleMoviePlayback}
+                    onSelectMovieClip={selectMovieClip}
+                    onNextStep={() => void runNextStep()}
+                    onLoadedData={handleActiveMovieLoadedData}
+                    onPlay={() => setMoviePlaying(true)}
+                    onPause={handleActiveMoviePause}
+                    onEnded={handleActiveMovieEnded}
+                  />
+                </Box>
+              </Flex>
             </Stack>
           )}
         </ScrollArea>

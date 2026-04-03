@@ -25,6 +25,13 @@ type FrameGenerationOptions = {
   candidateCount: number;
   size: string;
   seedMode: string;
+  overridesByFrameId?: Record<
+    string,
+    {
+      prompt?: string;
+      usePreviousFrameAsReference?: boolean;
+    }
+  >;
 };
 
 type TransitionGenerationOptions = {
@@ -37,6 +44,8 @@ type ClaimedFrameJob = {
   job: GenerationJob;
   frame: Frame;
   projectPath: string;
+  prompt: string;
+  usePreviousFrameAsReference: boolean;
   referenceImages: string[];
   dependencyFrameId: string | null;
   dependencyVersionId: string | null;
@@ -75,8 +84,12 @@ function getJobRunnerState(): JobRunnerState {
   return global.__moviegenJobRunnerState__;
 }
 
-function resolveFrameReferenceImages(frame: Frame, manifest: ProjectManifest) {
-  if (!frame.usePreviousFrameAsReference) {
+function resolveFrameReferenceImages(
+  frame: Frame,
+  manifest: ProjectManifest,
+  usePreviousFrameAsReference: boolean,
+) {
+  if (!usePreviousFrameAsReference) {
     return {
       referenceImages: frame.referenceImages,
       dependencyFrameId: null,
@@ -138,11 +151,27 @@ async function claimNextQueuedFrameJob(projectPath: string): Promise<ClaimedFram
       return null;
     }
 
+    const prompt =
+      typeof job.requestPayload.prompt === "string" ? job.requestPayload.prompt.trim() : frame.imagePrompt.trim();
+    if (!prompt) {
+      const timestamp = nowIso();
+      job.status = "error";
+      job.errorMessage = "Frame prompt is required";
+      job.updatedAt = timestamp;
+      job.completedAt = timestamp;
+      return null;
+    }
+
+    const usePreviousFrameAsReference =
+      typeof job.requestPayload.usePreviousFrameAsReference === "boolean"
+        ? job.requestPayload.usePreviousFrameAsReference && frame.position > 0
+        : frame.usePreviousFrameAsReference && frame.position > 0;
+
     let referenceImages: string[];
     let dependencyFrameId: string | null = null;
     let dependencyVersionId: string | null = null;
     try {
-      const resolvedReference = resolveFrameReferenceImages(frame, manifest);
+      const resolvedReference = resolveFrameReferenceImages(frame, manifest, usePreviousFrameAsReference);
       referenceImages = resolvedReference.referenceImages;
       dependencyFrameId = resolvedReference.dependencyFrameId;
       dependencyVersionId = resolvedReference.dependencyVersionId;
@@ -166,6 +195,8 @@ async function claimNextQueuedFrameJob(projectPath: string): Promise<ClaimedFram
       job: structuredClone(job),
       frame: structuredClone(frame),
       projectPath,
+      prompt,
+      usePreviousFrameAsReference,
       referenceImages,
       dependencyFrameId,
       dependencyVersionId,
@@ -368,6 +399,8 @@ async function completeTransitionJob(
 
     const timestamp = nowIso();
     const versionId = createId("transitionver");
+    const sourcePrompt =
+      typeof job.requestPayload.prompt === "string" ? job.requestPayload.prompt : transition.transitionPrompt;
 
     job.targetId = versionId;
     job.provider = "atlas";
@@ -389,6 +422,7 @@ async function completeTransitionJob(
       createdAt: timestamp,
       reviewerDecision: "unreviewed" as const,
       reviewerNotes: "",
+      sourcePrompt,
       promptRevision,
       fromApprovedVersionId,
       toApprovedVersionId,
@@ -458,7 +492,7 @@ async function runQueuedFrameJobs(projectPath: string) {
         const [asset] = await generateFrameImages({
           projectPath,
           frameId: claimed.frame.id,
-          prompt: claimed.frame.imagePrompt,
+          prompt: claimed.prompt,
           referenceImages: claimed.referenceImages,
           candidateCount: 1,
           size: String(claimed.job.requestPayload.size ?? "1280x720"),
@@ -559,7 +593,12 @@ async function runQueuedTransitionJobs(projectPath: string) {
   }
 }
 
-function buildQueuedFrameJobs(frame: Frame, options: FrameGenerationOptions): GenerationJob[] {
+function buildQueuedFrameJobs(
+  frame: Frame,
+  options: FrameGenerationOptions,
+  prompt: string,
+  usePreviousFrameAsReference: boolean,
+): GenerationJob[] {
   return Array.from({ length: options.candidateCount }, (_, index) => {
     const timestamp = nowIso();
     const seed =
@@ -577,8 +616,8 @@ function buildQueuedFrameJobs(frame: Frame, options: FrameGenerationOptions): Ge
       status: "queued",
       requestPayload: {
         frameId: frame.id,
-        prompt: frame.imagePrompt,
-        usePreviousFrameAsReference: frame.usePreviousFrameAsReference,
+        prompt,
+        usePreviousFrameAsReference,
         size: options.size,
         seedMode: options.seedMode,
         seed,
@@ -639,7 +678,26 @@ export async function enqueueFrameGeneration(
 
     const timestamp = nowIso();
     for (const frame of frames) {
-      manifest.jobs.push(...buildQueuedFrameJobs(frame, options));
+      const overrides = options.overridesByFrameId?.[frame.id];
+      const prompt = overrides?.prompt ?? frame.imagePrompt;
+      const usePreviousFrameAsReference =
+        (overrides?.usePreviousFrameAsReference ?? frame.usePreviousFrameAsReference) && frame.position > 0;
+
+      if (prompt.trim().length === 0) {
+        throw new Error("Frame prompt is required");
+      }
+
+      if (overrides?.prompt !== undefined) {
+        frame.imagePrompt = overrides.prompt;
+      }
+
+      if (overrides?.usePreviousFrameAsReference !== undefined) {
+        frame.usePreviousFrameAsReference = usePreviousFrameAsReference;
+      }
+
+      manifest.jobs.push(
+        ...buildQueuedFrameJobs(frame, options, prompt, usePreviousFrameAsReference),
+      );
       frame.updatedAt = timestamp;
     }
   });

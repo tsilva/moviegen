@@ -70,6 +70,7 @@ function createTransitionVersion(id: string, overrides: Partial<TransitionVersio
     createdAt: "2026-04-03T00:00:00.000Z",
     reviewerDecision: "unreviewed",
     reviewerNotes: "",
+    sourcePrompt: null,
     promptRevision: 1,
     fromApprovedVersionId: "framever_from",
     toApprovedVersionId: "framever_to",
@@ -185,17 +186,39 @@ describe("movie creator frame helpers", () => {
 });
 
 describe("movie creator transition helpers", () => {
-  test("shows the transition prompt for gallery labels", () => {
+  test("shows the prompt for the selected transition clip generation", () => {
+    const selectedVersion = createTransitionVersion("transitionver_selected", {
+      sourcePrompt: "Selected transition prompt",
+    });
     const transition = createTransitionView({
       transitionPrompt: "Whip pan into the next shot",
+      currentVideo: createTransitionVersion("transitionver_current", {
+        sourcePrompt: "Current transition prompt",
+      }),
+      latestVideoVersion: selectedVersion,
+      galleryVersions: [selectedVersion],
+    });
+
+    expect(getTransitionDisplayPrompt(transition, selectedVersion.id)).toBe("Selected transition prompt");
+  });
+
+  test("falls back to the live transition prompt when no clip prompt exists yet", () => {
+    const transition = createTransitionView({
+      transitionPrompt: "Whip pan into the next shot",
+      currentVideo: null,
+      latestVideoVersion: null,
+      galleryVersions: [],
     });
 
     expect(getTransitionDisplayPrompt(transition)).toBe("Whip pan into the next shot");
   });
 
-  test("falls back when the transition prompt is empty", () => {
+  test("falls back when neither clip prompt nor transition prompt exists", () => {
     const transition = createTransitionView({
       transitionPrompt: "   ",
+      currentVideo: null,
+      latestVideoVersion: null,
+      galleryVersions: [],
     });
 
     expect(getTransitionDisplayPrompt(transition)).toBe("No transition prompt yet");
@@ -208,13 +231,29 @@ describe("movie creator transition helpers", () => {
       toFrame: createFrameView({ id: "frame_2", position: 1 }),
     });
 
-    expect(getTransitionCardMeta(transition)).toMatchObject({
+    expect(getTransitionCardMeta(transition, "__add__")).toMatchObject({
       title: "Transition 1 -> 2",
       prompt: "No transition prompt yet",
       statusLabel: "Add Prompt",
       action: {
         label: "Add Prompt",
       },
+    });
+  });
+
+  test("uses the selected clip prompt in transition card metadata", () => {
+    const selectedVersion = createTransitionVersion("transitionver_selected", {
+      sourcePrompt: "Selected clip prompt",
+    });
+    const transition = createTransitionView({
+      galleryVersions: [selectedVersion],
+      latestVideoVersion: selectedVersion,
+      currentVideo: selectedVersion,
+    });
+
+    expect(getTransitionCardMeta(transition, selectedVersion.id)).toMatchObject({
+      prompt: "Selected clip prompt",
+      promptPlaceholder: false,
     });
   });
 });

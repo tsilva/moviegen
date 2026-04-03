@@ -47,8 +47,16 @@ function findFrameVersionByTileId(frame: FrameView, tileId: string) {
   return frame.galleryVersions.find((version) => version.id === tileId) ?? null;
 }
 
+function findTransitionVersionByTileId(transition: TransitionView, tileId: string) {
+  return transition.galleryVersions.find((version) => version.id === tileId) ?? null;
+}
+
 function getFallbackFramePrompt(frame: FrameView) {
   return frame.currentVersion?.sourcePrompt ?? frame.latestVersion?.sourcePrompt ?? frame.imagePrompt;
+}
+
+function getFallbackTransitionPrompt(transition: TransitionView) {
+  return transition.currentVideo?.sourcePrompt ?? transition.latestVideoVersion?.sourcePrompt ?? transition.transitionPrompt;
 }
 
 export function getFrameLabel(frame: Pick<FrameView, "position">) {
@@ -81,8 +89,13 @@ export function getFrameGenerationDraft(frame: FrameView, selectedGalleryTileId:
   };
 }
 
-export function getTransitionDisplayPrompt(transition: TransitionView) {
-  return transition.transitionPrompt.trim() || "No transition prompt yet";
+export function getTransitionDisplayPrompt(transition: TransitionView, selectedGalleryTileId?: string) {
+  const selectedPrompt = selectedGalleryTileId
+    ? findTransitionVersionByTileId(transition, selectedGalleryTileId)?.sourcePrompt
+    : null;
+  const prompt = selectedPrompt ?? getFallbackTransitionPrompt(transition);
+
+  return prompt?.trim() || "No transition prompt yet";
 }
 
 export function getFrameRepairAction(frame: FrameView) {
@@ -203,9 +216,9 @@ export function getFrameCardMeta(frame: FrameView, selectedGalleryTileId: string
   };
 }
 
-export function getTransitionCardMeta(transition: TransitionView): SequenceCardMeta {
-  const prompt = getTransitionDisplayPrompt(transition);
-  const promptPlaceholder = !transition.transitionPrompt.trim();
+export function getTransitionCardMeta(transition: TransitionView, selectedGalleryTileId?: string): SequenceCardMeta {
+  const prompt = getTransitionDisplayPrompt(transition, selectedGalleryTileId);
+  const promptPlaceholder = !prompt.trim() || prompt === "No transition prompt yet";
 
   if (!transition.transitionPrompt.trim()) {
     return {

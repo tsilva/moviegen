@@ -227,6 +227,8 @@ describe("frame job anchoring", () => {
       }),
     );
     expect(snapshot.manifest.jobs[0]?.status).toBe("completed");
+    expect(snapshot.manifest.frames[0]?.versions.at(-1)?.usePreviousFrameAsReference).toBe(false);
+    expect(snapshot.manifest.frames[0]?.usePreviousFrameAsReference).toBe(true);
   });
 
   test("first generated frame auto-approves itself", async () => {
@@ -288,11 +290,18 @@ describe("frame job anchoring", () => {
     expect(latestVersion?.reviewerDecision).toBe("approved");
   });
 
-  test("does not replace the current frame when the prompt changes while generation is in flight", async () => {
+  test("prompt draft changes do not stop an in-flight compatible frame from becoming current", async () => {
     const projectPath = await createTempProject();
     tempDirs.push(projectPath);
 
-    let resolveGeneration: ((value: Awaited<ReturnType<typeof generateFrameImagesMock>>) => void) | null = null;
+    let resolveGeneration:
+      | ((value: Array<{
+          model: string;
+          providerPredictionId: string;
+          relativePath: string;
+          inputPayload: Record<string, unknown>;
+        }>) => void)
+      | null = null;
     generateFrameImagesMock.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
@@ -324,7 +333,17 @@ describe("frame job anchoring", () => {
     pendingSnapshot.manifest.frames[0]!.imagePrompt = "First prompt revised";
     await saveManifest(projectPath, pendingSnapshot.manifest);
 
-    resolveGeneration?.([
+    const finishFrameGeneration = resolveGeneration;
+    if (!finishFrameGeneration) {
+      throw new Error("Expected frame generation promise to be pending");
+    }
+
+    (finishFrameGeneration as (value: Array<{
+      model: string;
+      providerPredictionId: string;
+      relativePath: string;
+      inputPayload: Record<string, unknown>;
+    }>) => void)([
       {
         model: "mock-edit-model",
         providerPredictionId: "pred_prompt_change",
@@ -337,9 +356,46 @@ describe("frame job anchoring", () => {
     const generatedFrame = snapshot.manifest.frames[0]!;
     const latestVersion = generatedFrame.versions.at(-1);
 
-    expect(generatedFrame.approvedVersionId).toBe(manifest.frames[0]!.approvedVersionId);
-    expect(latestVersion?.reviewerDecision).toBe("unreviewed");
+    expect(generatedFrame.approvedVersionId).toBe(latestVersion?.id);
+    expect(latestVersion?.reviewerDecision).toBe("approved");
     expect(latestVersion?.sourcePrompt).toBe("First prompt");
+  });
+
+  test("queues explicit generation overrides and persists them as the latest frame defaults", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      draft.frames = [first];
+      return draft;
+    });
+
+    const queuedSnapshot = await enqueueFrameGeneration([manifest.frames[0]!.id], {
+      candidateCount: 1,
+      overridesByFrameId: {
+        [manifest.frames[0]!.id]: {
+          prompt: "Override prompt",
+          usePreviousFrameAsReference: true,
+        },
+      },
+      size: "1280x720",
+      seedMode: "random",
+    });
+
+    expect(queuedSnapshot.manifest.jobs[0]?.requestPayload).toMatchObject({
+      prompt: "Override prompt",
+      usePreviousFrameAsReference: false,
+    });
+    expect(queuedSnapshot.manifest.frames[0]?.imagePrompt).toBe("Override prompt");
+    expect(queuedSnapshot.manifest.frames[0]?.usePreviousFrameAsReference).toBe(false);
+
+    const snapshot = await waitForFrameJobToSettle(projectPath);
+    const latestVersion = snapshot.manifest.frames[0]?.versions.at(-1);
+
+    expect(latestVersion?.sourcePrompt).toBe("Override prompt");
+    expect(latestVersion?.usePreviousFrameAsReference).toBe(false);
   });
 
   test("uses the previous approved frame as the anchor reference", async () => {
@@ -374,6 +430,81 @@ describe("frame job anchoring", () => {
         referenceImages: [approvedPath],
       }),
     );
+  });
+
+  test("processes a queued frame chain in order when multiple prompts are started together", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    generateFrameImagesMock
+      .mockResolvedValueOnce([
+        {
+          model: "mock-edit-model",
+          providerPredictionId: "pred_frame_1",
+          relativePath: path.join("frames", "generated", "frame-1.png"),
+          inputPayload: { model: "mock-edit-model", step: 1 },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          model: "mock-edit-model",
+          providerPredictionId: "pred_frame_2",
+          relativePath: path.join("frames", "generated", "frame-2.png"),
+          inputPayload: { model: "mock-edit-model", step: 2 },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          model: "mock-edit-model",
+          providerPredictionId: "pred_frame_3",
+          relativePath: path.join("frames", "generated", "frame-3.png"),
+          inputPayload: { model: "mock-edit-model", step: 3 },
+        },
+      ]);
+
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const second = createFrame("Second", 1);
+      const third = createFrame("Third", 2);
+      first.usePreviousFrameAsReference = true;
+      second.usePreviousFrameAsReference = true;
+      third.usePreviousFrameAsReference = true;
+      draft.frames = [first, second, third];
+      return draft;
+    });
+
+    await enqueueFrameGeneration(
+      manifest.frames.map((frame) => frame.id),
+      {
+        candidateCount: 1,
+        size: "1280x720",
+        seedMode: "random",
+      },
+    );
+
+    const snapshot = await waitForFrameJobToSettle(projectPath);
+
+    expect(generateFrameImagesMock).toHaveBeenCalledTimes(3);
+    expect(generateFrameImagesMock.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        frameId: manifest.frames[0]?.id,
+        referenceImages: [],
+      }),
+    );
+    expect(generateFrameImagesMock.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        frameId: manifest.frames[1]?.id,
+        referenceImages: [path.join("frames", "generated", "frame-1.png")],
+      }),
+    );
+    expect(generateFrameImagesMock.mock.calls[2]?.[0]).toEqual(
+      expect.objectContaining({
+        frameId: manifest.frames[2]?.id,
+        referenceImages: [path.join("frames", "generated", "frame-2.png")],
+      }),
+    );
+    expect(snapshot.frames.every((frame) => frame.currentVersion != null)).toBe(true);
   });
 
   test("falls back to the previous frame latest candidate when there is no approved version", async () => {
@@ -562,6 +693,7 @@ describe("frame job anchoring", () => {
     );
     expect(generatedTransition.approvedVideoVersionId).toBeTruthy();
     expect(approvedVideo?.reviewerDecision).toBe("approved");
+    expect(approvedVideo?.sourcePrompt).toBe("Match cut");
   });
 
   test("new generated transition replaces an existing current clip when it is still current", async () => {
@@ -626,7 +758,15 @@ describe("frame job anchoring", () => {
     const projectPath = await createTempProject();
     tempDirs.push(projectPath);
 
-    let resolveGeneration: ((value: Awaited<ReturnType<typeof generateTransitionVideoMock>>) => void) | null = null;
+    let resolveGeneration:
+      | ((value: {
+          model: string;
+          providerPredictionId: string;
+          relativePath: string;
+          posterRelativePath: string;
+          inputPayload: Record<string, unknown>;
+        }) => void)
+      | null = null;
     generateTransitionVideoMock.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
@@ -687,7 +827,18 @@ describe("frame job anchoring", () => {
     pendingSnapshot.manifest.transitions[0]!.promptRevision = 2;
     await saveManifest(projectPath, pendingSnapshot.manifest);
 
-    resolveGeneration?.({
+    const finishTransitionGeneration = resolveGeneration;
+    if (!finishTransitionGeneration) {
+      throw new Error("Expected transition generation promise to be pending");
+    }
+
+    (finishTransitionGeneration as (value: {
+      model: string;
+      providerPredictionId: string;
+      relativePath: string;
+      posterRelativePath: string;
+      inputPayload: Record<string, unknown>;
+    }) => void)({
       model: "mock-video-model",
       providerPredictionId: "pred_transition_prompt_change",
       relativePath: path.join("transitions", "generated", "late-clip.mp4"),
@@ -702,6 +853,7 @@ describe("frame job anchoring", () => {
     expect(generatedTransition.approvedVideoVersionId).toBe(manifest.transitions[0]!.approvedVideoVersionId);
     expect(latestVersion?.reviewerDecision).toBe("unreviewed");
     expect(latestVersion?.promptRevision).toBe(1);
+    expect(latestVersion?.sourcePrompt).toBe("Match cut");
   });
 
   test("transition generation allows an empty prompt", async () => {

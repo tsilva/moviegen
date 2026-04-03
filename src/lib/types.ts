@@ -49,6 +49,7 @@ export type TransitionVersion = {
   createdAt: string;
   reviewerDecision: ReviewerDecision;
   reviewerNotes: string;
+  sourcePrompt?: string | null;
   promptRevision: number;
   fromApprovedVersionId: string | null;
   toApprovedVersionId: string | null;
@@ -113,7 +114,7 @@ export type FrameStatus =
   | "approved"
   | "error";
 
-export type FrameNextAction = "generate" | null;
+export type FrameNextAction = "write_prompt" | "generate" | null;
 
 export type TransitionPromptStatus =
   | "blocked"

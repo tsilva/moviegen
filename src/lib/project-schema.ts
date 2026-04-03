@@ -42,6 +42,7 @@ export const transitionVersionSchema = z.object({
   createdAt: z.string(),
   reviewerDecision: reviewerDecisionSchema,
   reviewerNotes: z.string(),
+  sourcePrompt: z.string().nullable().optional(),
   promptRevision: z.number(),
   fromApprovedVersionId: z.string().nullable(),
   toApprovedVersionId: z.string().nullable(),
