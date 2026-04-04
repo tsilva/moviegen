@@ -720,11 +720,11 @@ export function deriveTransitionNextAction(input: {
     return null;
   }
 
-  if (videoStatus === "error" || videoStatus === "stale" || videoStatus === "not_ready") {
-    return "generate";
+  if (videoStatus === "queued" || videoStatus === "generating") {
+    return null;
   }
 
-  return null;
+  return "generate";
 }
 
 export function deriveTransitionDisabledReason(transition: TransitionView) {

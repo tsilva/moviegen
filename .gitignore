@@ -28,15 +28,7 @@ moviegen.project.json
 *.png
 *.jpg
 *.jpeg
-*.gif
-*.webp
 *.mp4
-*.mov
-*.avi
-*.mkv
-*.webm
-*.heic
-*.heif
 
 # debug
 npm-debug.log*

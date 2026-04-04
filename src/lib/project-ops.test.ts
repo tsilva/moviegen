@@ -205,7 +205,7 @@ describe("project transition reconciliation", () => {
     expect(snapshot.transitions[0]?.disabledReason).toBeNull();
   });
 
-  test("transition leaves candidate selection to details once a matching clip exists", () => {
+  test("transition remains generatable once a matching clip exists", () => {
     const manifest = createEmptyManifest("test");
     const first = frame("A");
     const second = frame("B");
@@ -239,7 +239,8 @@ describe("project transition reconciliation", () => {
 
     const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
     expect(snapshot.transitions[0]?.videoStatus).toBe("generated_unreviewed");
-    expect(snapshot.transitions[0]?.nextAction).toBeNull();
+    expect(snapshot.transitions[0]?.nextAction).toBe("generate");
+    expect(snapshot.tracks[0]?.slots.transition.canGenerate).toBe(true);
   });
 
   test("approved frame stays selected when a newer alternate candidate exists", () => {
