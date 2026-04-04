@@ -170,6 +170,16 @@ describe("project store concurrency", () => {
     expect(contents).toContain("https://ark-content-generation-ap-southeast-1.tos-ap-southeast-1.volces.com/example/output.mp4?keep=1");
   });
 
+  test("opening a project rejects relative paths", async () => {
+    await expect(openProject(".moviegen-dev-runtime")).rejects.toThrow(/absolute path/i);
+  });
+
+  test("opening a project rejects directories inside the app workspace", async () => {
+    await expect(openProject(path.join(process.cwd(), ".moviegen-dev-runtime"))).rejects.toThrow(
+      /outside the moviegen app workspace/i,
+    );
+  });
+
   test("clearing a project removes Moviegen-managed assets and recreates an empty manifest", async () => {
     const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "moviegen-project-store-"));
     tempDirs.push(projectPath);

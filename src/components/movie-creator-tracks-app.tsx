@@ -108,7 +108,6 @@ type MoviePlaylistEntry = {
 
 type MovieCreatorAppProps = {
   initialSnapshot?: ProjectSnapshot | null;
-  initialProjectPath?: string;
 };
 
 type AssetGalleryProps<TVersion extends FrameVersion | TransitionVersion> = {
@@ -148,9 +147,7 @@ type SequenceOverviewProps = {
   onEnded: () => void;
 };
 
-const DEFAULT_PROJECT_PATH = process.env.NEXT_PUBLIC_DEFAULT_PROJECT_PATH?.trim() ?? "";
-const PROJECT_PATH_PLACEHOLDER =
-  process.env.NEXT_PUBLIC_DEFAULT_PROJECT_PATH ?? "/Users/tsilva/Desktop/moviegen";
+const PROJECT_PATH_PLACEHOLDER = "/absolute/path/to/moviegen-project";
 const WORKSPACE_HEIGHT = "calc(100dvh - 32px)";
 const GALLERY_ADD_TILE_ID = "__add__";
 const ENTRY_PREVIEW_WIDTH = 180;
@@ -1403,10 +1400,9 @@ function SequenceOverview({
 
 export function MovieCreatorApp({
   initialSnapshot = null,
-  initialProjectPath = DEFAULT_PROJECT_PATH,
 }: MovieCreatorAppProps) {
   const [snapshot, setSnapshot] = useState<ProjectSnapshot | null>(initialSnapshot);
-  const [projectPath, setProjectPath] = useState(initialProjectPath);
+  const [projectPath, setProjectPath] = useState(initialSnapshot?.projectPath ?? "");
   const [assetInfoTarget, setAssetInfoTarget] = useState<AssetInfoTarget | null>(null);
   const [assetPreviewTarget, setAssetPreviewTarget] = useState<AssetPreviewTarget | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<TrackSlotSelection | null>(getSelectionFromSnapshot(initialSnapshot));
@@ -1439,7 +1435,6 @@ export function MovieCreatorApp({
   const [syncTick, setSyncTick] = useState(0);
   const previousPendingByEntryRef = useRef<Record<string, boolean>>({});
   const previousDefaultTileByEntryRef = useRef<Record<string, string>>({});
-  const attemptedAutoLoadPathRef = useRef<string | null>(null);
   const frameAutosaveRequestIdRef = useRef(0);
   const transitionAutosaveRequestIdRef = useRef(0);
   const syncedEditorEntryKeyRef = useRef<string | null>(null);
@@ -1449,7 +1444,6 @@ export function MovieCreatorApp({
   const movieVideoRef = useRef<HTMLVideoElement | null>(null);
   const trackCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const frameReferenceInputRef = useRef<HTMLInputElement | null>(null);
-  const normalizedProjectPath = projectPath.trim();
   const snapshotProjectPath = snapshot?.projectPath ?? null;
   const projectGenerationDefaults = snapshot?.manifest.generationDefaults ?? null;
 
@@ -1590,7 +1584,7 @@ export function MovieCreatorApp({
 
     if (!nextProjectPath) {
       if (shouldNotify) {
-        notifications.show({ color: "yellow", message: "Enter a local project path first" });
+        notifications.show({ color: "yellow", message: "Enter an absolute project directory first" });
       }
       return;
     }
@@ -1613,21 +1607,6 @@ export function MovieCreatorApp({
       }
     }
   }
-
-  const loadProjectEffect = useEffectEvent((pathValue: string) => {
-    void loadProject(pathValue, { notify: false });
-  });
-
-  useEffect(() => {
-    if (
-      !snapshot &&
-      normalizedProjectPath &&
-      attemptedAutoLoadPathRef.current !== normalizedProjectPath
-    ) {
-      attemptedAutoLoadPathRef.current = normalizedProjectPath;
-      loadProjectEffect(normalizedProjectPath);
-    }
-  }, [normalizedProjectPath, snapshot]);
 
   const syncSelectedSlot = useEffectEvent((nextSelection: TrackSlotSelection | null) => {
     setSelectedSlot(nextSelection);
@@ -2654,7 +2633,10 @@ export function MovieCreatorApp({
                 <Stack gap="md">
                   <Title order={2}>Open a Local Project</Title>
                   <Text c="dimmed">
-                    Moviegen stores its manifest and generated media directly inside the selected folder.
+                    Moviegen stores its manifest and generated media only inside the absolute project directory you choose here.
+                  </Text>
+                  <Text c="dimmed" size="sm">
+                    To avoid polluting this app workspace, the selected directory must be outside the Moviegen repo.
                   </Text>
                   <TextInput
                     label="Project Path"
@@ -3185,6 +3167,7 @@ export function MovieCreatorApp({
             value={projectPath}
             onChange={(event) => setProjectPath(event.currentTarget.value)}
             placeholder={PROJECT_PATH_PLACEHOLDER}
+            description="Use an absolute directory outside the Moviegen repo."
             name="project-path-modal"
             autoComplete="off"
           />

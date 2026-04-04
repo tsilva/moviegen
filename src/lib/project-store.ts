@@ -17,6 +17,7 @@ type RuntimeState = {
 };
 
 const PROJECT_CONTENT_DIRECTORIES = ["frames", "transitions", path.join("deleted")] as const;
+const WORKSPACE_ROOT = path.resolve(process.cwd());
 
 declare global {
   var __moviegenRuntimeState__: RuntimeState | undefined;
@@ -45,8 +46,31 @@ function getRuntimeState(): RuntimeState {
   return global.__moviegenRuntimeState__;
 }
 
-export function setCurrentProjectPath(projectPath: string) {
-  getRuntimeState().currentProjectPath = projectPath;
+function isPathInsideWorkspace(projectPath: string) {
+  const relativePath = path.relative(WORKSPACE_ROOT, projectPath);
+  return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+}
+
+function resolveProjectPath(projectPathInput: string) {
+  const trimmedProjectPath = projectPathInput.trim();
+  if (!trimmedProjectPath) {
+    throw new Error("Project path is required");
+  }
+
+  if (!path.isAbsolute(trimmedProjectPath)) {
+    throw new Error("Project path must be an absolute path");
+  }
+
+  const projectPath = path.resolve(trimmedProjectPath);
+  if (isPathInsideWorkspace(projectPath)) {
+    throw new Error("Project path must be outside the Moviegen app workspace");
+  }
+
+  return projectPath;
+}
+
+export function setCurrentProjectPath(projectPath: string | null | undefined) {
+  getRuntimeState().currentProjectPath = projectPath?.trim() ? resolveProjectPath(projectPath) : null;
 }
 
 export function getCurrentProjectPath() {
@@ -54,7 +78,7 @@ export function getCurrentProjectPath() {
 }
 
 export function getManifestPath(projectPath: string) {
-  return path.join(projectPath, MANIFEST_FILENAME);
+  return path.join(resolveProjectPath(projectPath), MANIFEST_FILENAME);
 }
 
 async function ensureProjectDirectories(projectPath: string) {
@@ -154,7 +178,7 @@ async function withProjectLock<T>(projectPath: string, task: () => Promise<T> | 
 }
 
 export async function openProject(projectPathInput: string, createIfMissing = true): Promise<ProjectSnapshot> {
-  const projectPath = path.resolve(projectPathInput);
+  const projectPath = resolveProjectPath(projectPathInput);
   await ensureProjectDirectories(projectPath);
   const manifest = await withProjectLock(projectPath, async () => {
     try {
@@ -175,7 +199,7 @@ export async function openProject(projectPathInput: string, createIfMissing = tr
 }
 
 export async function clearProject(projectPathInput: string) {
-  const projectPath = path.resolve(projectPathInput);
+  const projectPath = resolveProjectPath(projectPathInput);
 
   const manifest = await withProjectLock(projectPath, async () => {
     await Promise.all([
@@ -206,7 +230,7 @@ export async function readCurrentProjectSnapshot() {
 }
 
 export async function readProjectSnapshot(projectPathInput: string) {
-  const projectPath = path.resolve(projectPathInput);
+  const projectPath = resolveProjectPath(projectPathInput);
   const manifest = await loadManifest(projectPath);
   return buildProjectSnapshot(manifest, projectPath);
 }
@@ -215,7 +239,7 @@ export async function mutateProject<T>(
   projectPathInput: string,
   mutator: (manifest: ProjectManifest, projectPath: string) => Promise<T> | T,
 ) {
-  const projectPath = path.resolve(projectPathInput);
+  const projectPath = resolveProjectPath(projectPathInput);
   return withProjectLock(projectPath, async () => {
     const manifest = await loadManifest(projectPath);
     const before = deepClone(manifest);
