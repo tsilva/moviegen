@@ -164,6 +164,16 @@ function cloneGenerationDefaults(generationDefaults: ProjectGenerationDefaults |
   return structuredClone(generationDefaults ?? createDefaultGenerationDefaults());
 }
 
+function getProjectModelConfigDraft(
+  generationDefaults: ProjectGenerationDefaults,
+  modelId: string,
+) {
+  return generationDefaults.byModel[modelId] ?? {
+    systemPromptTemplate: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+    settings: getDraftSettingsForModel(modelId, {}),
+  };
+}
+
 type GenerationConfigFieldsProps = {
   assetKind: "frame" | "transition";
   modelId: string;
@@ -173,6 +183,7 @@ type GenerationConfigFieldsProps = {
   onSystemPromptTemplateChange: (value: string) => void;
   onSettingChange: (key: string, value: string | boolean) => void;
   systemPromptLabel?: string;
+  showModelSelect?: boolean;
 };
 
 function GenerationConfigFields({
@@ -184,23 +195,26 @@ function GenerationConfigFields({
   onSystemPromptTemplateChange,
   onSettingChange,
   systemPromptLabel = "System Prompt Template",
+  showModelSelect = true,
 }: GenerationConfigFieldsProps) {
   const models = getModelsForAssetKind(assetKind);
   const definition = (getModelDefinition(modelId) ?? models[0] ?? null) as GenerationModelDefinition | null;
 
   return (
     <Stack gap="xs">
-      <Select
-        label="Model"
-        value={modelId}
-        data={models.map((model) => ({ value: model.id, label: model.label }))}
-        allowDeselect={false}
-        onChange={(value) => {
-          if (value) {
-            onModelIdChange(value);
-          }
-        }}
-      />
+      {showModelSelect ? (
+        <Select
+          label="Model"
+          value={modelId}
+          data={models.map((model) => ({ value: model.id, label: model.label }))}
+          allowDeselect={false}
+          onChange={(value) => {
+            if (value) {
+              onModelIdChange(value);
+            }
+          }}
+        />
+      ) : null}
       <Textarea
         label={systemPromptLabel}
         description={`Use ${DEFAULT_SYSTEM_PROMPT_TEMPLATE} exactly once.`}
@@ -3118,40 +3132,68 @@ export function MovieCreatorApp({
             if (!selectedModel) {
               return null;
             }
-
-            const config = projectGenerationDefaultsDraft.byModel[selectedModelId] ?? {
-              systemPromptTemplate: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
-              settings: getDraftSettingsForModel(selectedModelId, {}),
-            };
+            const models = getModelsForAssetKind(assetKind);
 
             return (
               <Card key={assetKind} withBorder radius="lg" p="md">
                 <Stack gap="sm">
                   <Text fw={700}>{assetKind === "frame" ? "Image Defaults" : "Video Defaults"}</Text>
-                  <GenerationConfigFields
-                    assetKind={assetKind}
-                    modelId={selectedModelId}
-                    systemPromptTemplate={config.systemPromptTemplate}
-                    settings={getDraftSettingsForModel(selectedModelId, config.settings)}
-                    onModelIdChange={(modelId) => {
-                      updateProjectSelectedModelDraft(assetKind, modelId);
-                    }}
-                    onSystemPromptTemplateChange={(value) => {
-                      updateProjectGenerationDefaultsDraft(selectedModelId, (current) => ({
-                        ...current,
-                        systemPromptTemplate: value,
-                      }));
-                    }}
-                    onSettingChange={(key, value) => {
-                      updateProjectGenerationDefaultsDraft(selectedModelId, (current) => ({
-                        ...current,
-                        settings: {
-                          ...current.settings,
-                          [key]: value,
-                        },
-                      }));
+                  <Select
+                    label="Default Model"
+                    value={selectedModelId}
+                    data={models.map((model) => ({ value: model.id, label: model.label }))}
+                    allowDeselect={false}
+                    onChange={(value) => {
+                      if (value) {
+                        updateProjectSelectedModelDraft(assetKind, value);
+                      }
                     }}
                   />
+                  <Divider />
+                  {models.map((model) => {
+                    const config = getProjectModelConfigDraft(projectGenerationDefaultsDraft, model.id);
+
+                    return (
+                      <Card key={model.id} withBorder radius="md" p="sm">
+                        <Stack gap="sm">
+                          <Group justify="space-between" align="flex-start">
+                            <div>
+                              <Text fw={600}>{model.label}</Text>
+                              <Text c="dimmed" size="sm">
+                                {model.id === selectedModelId ? "Currently selected by default" : "Saved when this model is chosen"}
+                              </Text>
+                            </div>
+                            {model.id === selectedModelId ? <Badge color="blue">Default</Badge> : null}
+                          </Group>
+                          <GenerationConfigFields
+                            assetKind={assetKind}
+                            modelId={model.id}
+                            systemPromptTemplate={config.systemPromptTemplate}
+                            settings={getDraftSettingsForModel(model.id, config.settings)}
+                            showModelSelect={false}
+                            onModelIdChange={(modelId) => {
+                              updateProjectSelectedModelDraft(assetKind, modelId);
+                            }}
+                            onSystemPromptTemplateChange={(value) => {
+                              updateProjectGenerationDefaultsDraft(model.id, (current) => ({
+                                ...current,
+                                systemPromptTemplate: value,
+                              }));
+                            }}
+                            onSettingChange={(key, value) => {
+                              updateProjectGenerationDefaultsDraft(model.id, (current) => ({
+                                ...current,
+                                settings: {
+                                  ...current.settings,
+                                  [key]: value,
+                                },
+                              }));
+                            }}
+                          />
+                        </Stack>
+                      </Card>
+                    );
+                  })}
                 </Stack>
               </Card>
             );

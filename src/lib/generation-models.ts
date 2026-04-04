@@ -73,7 +73,15 @@ export const MODEL_REGISTRY: Record<string, GenerationModelDefinition> = {
     id: PRO_FRAME_MODEL_ID,
     label: "Wan 2.7 Pro Image Edit",
     assetKind: "frame",
-    settings: [],
+    settings: [
+      {
+        key: "resolution",
+        label: "Resolution",
+        kind: "select",
+        defaultValue: "720p",
+        options: FRAME_RESOLUTION_OPTIONS,
+      },
+    ],
   },
   [STANDARD_FRAME_MODEL_ID]: {
     id: STANDARD_FRAME_MODEL_ID,
