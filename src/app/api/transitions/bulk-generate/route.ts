@@ -7,7 +7,7 @@ import { isTransitionDurationSeconds } from "@/lib/generation-models";
 const requestSchema = z.object({
   transitionIds: z.array(z.string()),
   duration: z.number().int().refine(isTransitionDurationSeconds, {
-    message: "Duration must be one of 4, 5, 6, 7, 8, 9, 10, 11, or 12 seconds",
+    message: "Duration must match a supported transition-model duration",
   }).optional(),
   size: z.string().optional(),
   fps: z.number().int().min(8).max(60).optional(),

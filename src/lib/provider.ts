@@ -6,7 +6,12 @@ import {
   getVideoGenerateAudioDefault,
   getVideoResolutionDefault,
 } from "@/lib/generation-defaults";
-import { DEFAULT_FRAME_MODEL_ID, DEFAULT_TRANSITION_MODEL_ID, getAtlasFrameRequestModel } from "@/lib/generation-models";
+import {
+  DEFAULT_FRAME_MODEL_ID,
+  DEFAULT_TRANSITION_MODEL_ID,
+  WAN_TRANSITION_MODEL_ID,
+  getAtlasFrameRequestModel,
+} from "@/lib/generation-models";
 import type { GenerationSettings } from "@/lib/types";
 
 export type GeneratedFrameAsset = {
@@ -447,28 +452,35 @@ export async function generateTransitionVideo(
   ]);
   const settings = input.settings ?? {};
   const { width, height } = parseGenerationSize(input.size);
-  const resolution =
-    typeof settings.resolution === "string" ? settings.resolution : getVideoResolutionDefault();
-  const aspectRatio =
-    typeof settings.aspectRatio === "string" ? settings.aspectRatio : getVideoAspectRatioDefault();
-  const cameraFixed =
-    typeof settings.cameraFixed === "boolean" ? settings.cameraFixed : getVideoCameraFixedDefault();
-  const generateAudio =
-    typeof settings.generateAudio === "boolean" ? settings.generateAudio : getVideoGenerateAudioDefault();
-  const requestPayload: Record<string, unknown> = {
-    model: input.modelId,
-    prompt: input.prompt,
-    image: fromImage,
-    last_image: toImage,
-    width,
-    height,
-    resolution,
-    aspect_ratio: aspectRatio,
-    duration: input.duration,
-    fps: input.fps,
-    camera_fixed: cameraFixed,
-    generate_audio: generateAudio,
-  };
+  const requestPayload: Record<string, unknown> = input.modelId === WAN_TRANSITION_MODEL_ID
+    ? {
+        model: input.modelId,
+        prompt: input.prompt,
+        image: fromImage,
+        last_image: toImage,
+        width,
+        height,
+        duration: input.duration,
+        fps: input.fps,
+      }
+    : {
+        model: input.modelId,
+        prompt: input.prompt,
+        image: fromImage,
+        last_image: toImage,
+        width,
+        height,
+        resolution:
+          typeof settings.resolution === "string" ? settings.resolution : getVideoResolutionDefault(),
+        aspect_ratio:
+          typeof settings.aspectRatio === "string" ? settings.aspectRatio : getVideoAspectRatioDefault(),
+        duration: input.duration,
+        fps: input.fps,
+        camera_fixed:
+          typeof settings.cameraFixed === "boolean" ? settings.cameraFixed : getVideoCameraFixedDefault(),
+        generate_audio:
+          typeof settings.generateAudio === "boolean" ? settings.generateAudio : getVideoGenerateAudioDefault(),
+      };
 
   const initial = await atlasRequest<AtlasGenerationResponse>("/model/generateVideo", {
     method: "POST",

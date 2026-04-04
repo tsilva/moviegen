@@ -54,4 +54,37 @@ describe("POST /api/transitions/bulk-generate", () => {
       generateAudio: false,
     });
   });
+
+  test("accepts Wan-compatible longer durations", async () => {
+    enqueueTransitionGenerationMock.mockResolvedValue({ ok: true });
+
+    await POST(
+      new Request("http://localhost/api/transitions/bulk-generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transitionIds: ["transition_123"],
+          duration: 15,
+        }),
+      }),
+    );
+
+    expect(enqueueTransitionGenerationMock).toHaveBeenCalledWith(["transition_123"], {
+      duration: 15,
+      overridesByTransitionId: {
+        transition_123: {
+          prompt: undefined,
+          generationOverrides: {
+            settings: {
+              duration: "15",
+            },
+          },
+        },
+      },
+      size: "1280x720",
+      fps: 24,
+      cameraFixed: undefined,
+      generateAudio: undefined,
+    });
+  });
 });
