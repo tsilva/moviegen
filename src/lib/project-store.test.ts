@@ -130,6 +130,46 @@ describe("project store concurrency", () => {
     expect(reloadedSnapshot.manifest.jobs.map((job) => job.status)).toEqual(["queued", "running", "completed", "error"]);
   });
 
+  test("manifest saves strip signed provider query parameters from persisted URLs", async () => {
+    const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "moviegen-project-store-"));
+    tempDirs.push(projectPath);
+
+    const manifest = createEmptyManifest("moviegen");
+    const frame = createFrame("Signed URL frame", 0);
+    frame.approvedVersionId = "framever_signed";
+    frame.versions.push({
+      id: "framever_signed",
+      model: "alibaba/wan-2.7/image-edit",
+      inputPayload: {},
+      responsePayload: {
+        settledResponse: {
+          outputs: [
+            "https://dashscope-7c2c.oss-accelerate.aliyuncs.com/example/output.png?Expires=1775408774&OSSAccessKeyId=example-access-key&Signature=signed&keep=1",
+            "https://ark-content-generation-ap-southeast-1.tos-ap-southeast-1.volces.com/example/output.mp4?X-Tos-Algorithm=TOS4-HMAC-SHA256&X-Tos-Credential=test-credential&X-Tos-Date=20260404T170916Z&X-Tos-Expires=86400&X-Tos-Signature=abcdef&X-Tos-SignedHeaders=host&keep=1",
+          ],
+        },
+      },
+      outputPath: "frames/signed.png",
+      thumbnailPath: "frames/signed.png",
+      generationJobId: "job_signed",
+      createdAt: nowIso(),
+      reviewerDecision: "approved",
+      reviewerNotes: "",
+    });
+    manifest.frames.push(frame);
+
+    await saveManifest(projectPath, manifest);
+
+    const contents = await fs.readFile(path.join(projectPath, "moviegen.project.json"), "utf8");
+
+    expect(contents).not.toContain("OSSAccessKeyId");
+    expect(contents).not.toContain("Signature=signed");
+    expect(contents).not.toContain("X-Tos-Credential");
+    expect(contents).not.toContain("X-Tos-Signature");
+    expect(contents).toContain("https://dashscope-7c2c.oss-accelerate.aliyuncs.com/example/output.png?Expires=1775408774&keep=1");
+    expect(contents).toContain("https://ark-content-generation-ap-southeast-1.tos-ap-southeast-1.volces.com/example/output.mp4?keep=1");
+  });
+
   test("clearing a project removes Moviegen-managed assets and recreates an empty manifest", async () => {
     const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "moviegen-project-store-"));
     tempDirs.push(projectPath);

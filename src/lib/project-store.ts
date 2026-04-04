@@ -22,6 +22,17 @@ declare global {
   var __moviegenRuntimeState__: RuntimeState | undefined;
 }
 
+const SENSITIVE_URL_QUERY_PARAMS = new Set([
+  "OSSAccessKeyId",
+  "Signature",
+  "X-Tos-Algorithm",
+  "X-Tos-Credential",
+  "X-Tos-Date",
+  "X-Tos-Expires",
+  "X-Tos-Signature",
+  "X-Tos-SignedHeaders",
+]);
+
 function getRuntimeState(): RuntimeState {
   if (!global.__moviegenRuntimeState__) {
     global.__moviegenRuntimeState__ = {
@@ -60,6 +71,51 @@ export async function loadManifest(projectPath: string) {
   return projectManifestSchema.parse(JSON.parse(contents));
 }
 
+function sanitizePersistedUrl(value: string) {
+  if (!/^https?:\/\//i.test(value) || !value.includes("?")) {
+    return value;
+  }
+
+  try {
+    const url = new URL(value);
+    let changed = false;
+
+    for (const key of [...url.searchParams.keys()]) {
+      if (!SENSITIVE_URL_QUERY_PARAMS.has(key)) {
+        continue;
+      }
+
+      url.searchParams.delete(key);
+      changed = true;
+    }
+
+    return changed ? url.toString() : value;
+  } catch {
+    return value;
+  }
+}
+
+function sanitizeManifestForPersistence<T>(value: T): T {
+  if (typeof value === "string") {
+    return sanitizePersistedUrl(value) as T;
+  }
+
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      value[index] = sanitizeManifestForPersistence(value[index]);
+    }
+    return value;
+  }
+
+  if (value && typeof value === "object") {
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      (value as Record<string, unknown>)[key] = sanitizeManifestForPersistence(nested);
+    }
+  }
+
+  return value;
+}
+
 export async function saveManifest(projectPath: string, manifest: ProjectManifest) {
   const manifestPath = getManifestPath(projectPath);
   const tempPath = `${manifestPath}.${process.pid}.${crypto.randomUUID()}.tmp`;
@@ -70,6 +126,7 @@ export async function saveManifest(projectPath: string, manifest: ProjectManifes
     selectedSlot: manifest.ui.selectedSlot,
     filter: manifest.ui.filter,
   };
+  sanitizeManifestForPersistence(manifest);
   await fs.writeFile(tempPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   await fs.rename(tempPath, manifestPath);
 }

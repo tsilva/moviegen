@@ -5,7 +5,9 @@ export const SYSTEM_PROMPT_TEMPLATE_TOKEN = "{{prompt}}";
 export const PRO_FRAME_MODEL_ID = "alibaba/wan-2.7-pro/image-edit";
 export const STANDARD_FRAME_MODEL_ID = "alibaba/wan-2.7/image-edit";
 export const DEFAULT_FRAME_MODEL_ID = STANDARD_FRAME_MODEL_ID;
-export const DEFAULT_TRANSITION_MODEL_ID = "bytedance/seedance-v1.5-pro/image-to-video";
+export const SEEDANCE_TRANSITION_MODEL_ID = "bytedance/seedance-v1.5-pro/image-to-video";
+export const WAN_TRANSITION_MODEL_ID = "alibaba/wan-2.7/image-to-video";
+export const DEFAULT_TRANSITION_MODEL_ID = SEEDANCE_TRANSITION_MODEL_ID;
 
 type GenerationSettingOption = {
   value: string;
@@ -33,6 +35,11 @@ export const TRANSITION_RESOLUTION_OPTIONS = [
   { value: "1080p", label: "1080p" },
 ] as const;
 
+export const WAN_TRANSITION_RESOLUTION_OPTIONS = [
+  { value: "720p", label: "720p" },
+  { value: "1080p", label: "1080p" },
+] as const;
+
 export const FRAME_RESOLUTION_OPTIONS = [
   { value: "480p", label: "480p" },
   { value: "720p", label: "720p" },
@@ -48,9 +55,15 @@ export const TRANSITION_ASPECT_RATIO_OPTIONS = [
   { value: "21:9", label: "21:9" },
 ] as const;
 
-export const TRANSITION_DURATION_SECONDS = [4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
+export const SEEDANCE_TRANSITION_DURATION_SECONDS = [4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
+export const WAN_TRANSITION_DURATION_SECONDS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] as const;
 
-export const TRANSITION_DURATION_OPTIONS = TRANSITION_DURATION_SECONDS.map((value) => ({
+export const TRANSITION_DURATION_OPTIONS = SEEDANCE_TRANSITION_DURATION_SECONDS.map((value) => ({
+  value: String(value),
+  label: `${value} sec`,
+})) as readonly GenerationSettingOption[];
+
+export const WAN_TRANSITION_DURATION_OPTIONS = WAN_TRANSITION_DURATION_SECONDS.map((value) => ({
   value: String(value),
   label: `${value} sec`,
 })) as readonly GenerationSettingOption[];
@@ -76,8 +89,8 @@ export const MODEL_REGISTRY: Record<string, GenerationModelDefinition> = {
       },
     ],
   },
-  [DEFAULT_TRANSITION_MODEL_ID]: {
-    id: DEFAULT_TRANSITION_MODEL_ID,
+  [SEEDANCE_TRANSITION_MODEL_ID]: {
+    id: SEEDANCE_TRANSITION_MODEL_ID,
     label: "Seedance 1.5 Pro Image to Video",
     assetKind: "transition",
     settings: [
@@ -113,6 +126,27 @@ export const MODEL_REGISTRY: Record<string, GenerationModelDefinition> = {
         label: "Generate Audio",
         kind: "boolean",
         defaultValue: true,
+      },
+    ],
+  },
+  [WAN_TRANSITION_MODEL_ID]: {
+    id: WAN_TRANSITION_MODEL_ID,
+    label: "Wan 2.7 Image to Video",
+    assetKind: "transition",
+    settings: [
+      {
+        key: "resolution",
+        label: "Resolution",
+        kind: "select",
+        defaultValue: "720p",
+        options: WAN_TRANSITION_RESOLUTION_OPTIONS,
+      },
+      {
+        key: "duration",
+        label: "Duration",
+        kind: "select",
+        defaultValue: "5",
+        options: WAN_TRANSITION_DURATION_OPTIONS,
       },
     ],
   },
@@ -161,8 +195,18 @@ export function getTransitionSizeFromSettings(settings: GenerationSettings, fall
   const resolution = typeof settings.resolution === "string" ? settings.resolution : null;
   const aspectRatio = typeof settings.aspectRatio === "string" ? settings.aspectRatio : null;
 
-  if (!resolution || !aspectRatio) {
+  if (!resolution) {
     return fallbackSize;
+  }
+
+  if (!aspectRatio) {
+    const sizesByResolution: Record<string, string> = {
+      "480p": "854x480",
+      "720p": "1280x720",
+      "1080p": "1920x1080",
+    };
+
+    return sizesByResolution[resolution] ?? fallbackSize;
   }
 
   const baseHeights: Record<string, number> = {
@@ -205,8 +249,16 @@ export function getFrameSizeFromSettings(settings: GenerationSettings, fallbackS
   return sizesByResolution[resolution] ?? fallbackSize;
 }
 
-export function isTransitionDurationSeconds(value: number): value is (typeof TRANSITION_DURATION_SECONDS)[number] {
-  return TRANSITION_DURATION_SECONDS.includes(value as (typeof TRANSITION_DURATION_SECONDS)[number]);
+export function isSeedanceTransitionDurationSeconds(
+  value: number,
+): value is (typeof SEEDANCE_TRANSITION_DURATION_SECONDS)[number] {
+  return SEEDANCE_TRANSITION_DURATION_SECONDS.includes(value as (typeof SEEDANCE_TRANSITION_DURATION_SECONDS)[number]);
+}
+
+export function isTransitionDurationSeconds(
+  value: number,
+): value is (typeof WAN_TRANSITION_DURATION_SECONDS)[number] {
+  return WAN_TRANSITION_DURATION_SECONDS.includes(value as (typeof WAN_TRANSITION_DURATION_SECONDS)[number]);
 }
 
 export function getTransitionDurationFromSettings(settings: GenerationSettings, fallbackDuration: number) {

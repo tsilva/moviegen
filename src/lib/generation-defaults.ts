@@ -4,7 +4,7 @@ import {
   DEFAULT_SYSTEM_PROMPT_TEMPLATE,
   DEFAULT_TRANSITION_MODEL_ID,
   getModelDefaultSettings,
-  isTransitionDurationSeconds,
+  isSeedanceTransitionDurationSeconds,
 } from "@/lib/generation-models";
 
 const DEFAULT_VIDEO_RESOLUTION = "480p";
@@ -45,7 +45,7 @@ export function getVideoAspectRatioDefault() {
 export function getVideoDurationDefault() {
   const value = process.env.SEEDANCE_VIDEO_DURATION ?? DEFAULT_VIDEO_DURATION;
   const duration = Number(value);
-  if (!Number.isInteger(duration) || !isTransitionDurationSeconds(duration)) {
+  if (!Number.isInteger(duration) || !isSeedanceTransitionDurationSeconds(duration)) {
     throw new Error(`Invalid value for SEEDANCE_VIDEO_DURATION: ${value}`);
   }
 

@@ -74,6 +74,12 @@ type ApiResult = ProjectSnapshot & {
   impact?: unknown;
 };
 
+type FinalVideoResult = {
+  clipCount: number;
+  generatedAt: string;
+  relativePath: string;
+};
+
 type AssetInfoTarget = {
   title: string;
   requestPayload: unknown;
@@ -126,11 +132,14 @@ type SequenceOverviewProps = {
   missingInputCount: number;
   actionableGenerationCount: number;
   inProgressCount: number;
+  canGenerateFinalVideo: boolean;
+  isGeneratingFinalVideo: boolean;
   activeMovieClip: MoviePlaylistEntry | null;
   movieIndex: number;
   moviePlaylist: MoviePlaylistEntry[];
   movieIsPlaying: boolean;
   movieVideoRef: React.RefObject<HTMLVideoElement | null>;
+  onGenerateFinalVideo: () => void;
   onTogglePlayback: () => void;
   onSelectMovieClip: (index: number) => void;
   onLoadedData: () => void;
@@ -523,15 +532,11 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
                 <Text fw={600} size="sm">
                   {pendingLabel}
                 </Text>
-                <Text c="dimmed" size="xs" ta="center">
-                  {kind === "frame"
-                    ? pendingLabel === "Queued"
-                      ? "A new asset is queued."
-                      : "A new asset is being generated."
-                    : pendingLabel === "Queued"
-                      ? "A new clip is queued."
-                      : "A new clip is being generated."}
-                </Text>
+                {pendingLabel === "Queued" ? (
+                  <Text c="dimmed" size="xs" ta="center">
+                    {kind === "frame" ? "A new asset is queued." : "A new clip is queued."}
+                  </Text>
+                ) : null}
               </Flex>
               <Button
                 size="xs"
@@ -542,15 +547,11 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
               >
                 Stop
               </Button>
-              <Text c="dimmed" size="xs" truncate>
-                {kind === "frame"
-                  ? pendingLabel === "Queued"
-                    ? "Waiting for asset"
-                    : "Generating asset"
-                  : pendingLabel === "Queued"
-                    ? "Waiting for clip"
-                    : "Generating clip"}
-              </Text>
+              {pendingLabel === "Queued" ? (
+                <Text c="dimmed" size="xs" truncate>
+                  {kind === "frame" ? "Waiting for asset" : "Waiting for clip"}
+                </Text>
+              ) : null}
             </Stack>
           </Box>
         ) : null}
@@ -1238,11 +1239,14 @@ function SequenceOverview({
   missingInputCount,
   actionableGenerationCount,
   inProgressCount,
+  canGenerateFinalVideo,
+  isGeneratingFinalVideo,
   activeMovieClip,
   movieIndex,
   moviePlaylist,
   movieIsPlaying,
   movieVideoRef,
+  onGenerateFinalVideo,
   onTogglePlayback,
   onSelectMovieClip,
   onLoadedData,
@@ -1334,6 +1338,16 @@ function SequenceOverview({
               Next
             </Button>
           </Group>
+          <Button
+            size="xs"
+            color="cyan"
+            variant="light"
+            loading={isGeneratingFinalVideo}
+            disabled={!canGenerateFinalVideo}
+            onClick={onGenerateFinalVideo}
+          >
+            Generate Final Video
+          </Button>
         </Stack>
       </Box>
 
@@ -1404,6 +1418,7 @@ export function MovieCreatorApp({
   const [gallerySelection, setGallerySelection] = useState<Record<string, string>>({});
   const [movieCursor, setMovieCursor] = useState(0);
   const [moviePlaying, setMoviePlaying] = useState(false);
+  const [finalVideoGenerating, setFinalVideoGenerating] = useState(false);
   const [framePromptDraft, setFramePromptDraft] = useState("");
   const [frameUsePreviousDraft, setFrameUsePreviousDraft] = useState(false);
   const [frameConfigDirty, setFrameConfigDirty] = useState(false);
@@ -1526,6 +1541,7 @@ export function MovieCreatorApp({
     previousDefaultTileByEntryRef.current = {};
     setMovieCursor(0);
     setMoviePlaying(false);
+    setFinalVideoGenerating(false);
     movieVideoRef.current?.pause();
     setAssetInfoTarget(null);
     setAssetPreviewTarget(null);
@@ -1846,6 +1862,8 @@ export function MovieCreatorApp({
   const activeMovieClip = moviePlaylist[movieIndex] ?? null;
   const movieIsPlaying = moviePlaying && activeMovieClip != null;
   const overviewStats = getSequenceOverviewStats(frames, transitions, moviePlaylist.length);
+  const canGenerateFinalVideo =
+    overviewStats.totalTransitionCount > 0 && overviewStats.currentClipCount === overviewStats.totalTransitionCount;
   const nextStep = getSequenceNextStep(frames, transitions, moviePlaylist.length);
   const isNextStepSelected =
     nextStep.kind === "frame"
@@ -2582,6 +2600,36 @@ export function MovieCreatorApp({
     setMoviePlaying(false);
   }
 
+  async function generateCurrentCutVideo() {
+    if (!canGenerateFinalVideo || finalVideoGenerating) {
+      return;
+    }
+
+    setFinalVideoGenerating(true);
+
+    try {
+      const result = await requestJson<FinalVideoResult>("/api/final-video", {
+        method: "POST",
+      });
+
+      movieVideoRef.current?.pause();
+      setMoviePlaying(false);
+      setAssetPreviewTarget({
+        title: result.clipCount === 1 ? "Final Video" : `Final Video · ${result.clipCount} Clips`,
+        kind: "transition",
+        src: `${assetUrl(result.relativePath)}&v=${encodeURIComponent(result.generatedAt)}`,
+      });
+      notifications.show({ color: "teal", message: "Final video generated" });
+    } catch (error) {
+      notifications.show({
+        color: "red",
+        message: error instanceof Error ? error.message : "Failed to generate final video",
+      });
+    } finally {
+      setFinalVideoGenerating(false);
+    }
+  }
+
   function runNextStep() {
     if (nextStep.kind === "current_cut_ready") {
       return;
@@ -3007,11 +3055,14 @@ export function MovieCreatorApp({
                         missingInputCount={overviewStats.missingInputCount}
                         actionableGenerationCount={overviewStats.actionableGenerationCount}
                         inProgressCount={overviewStats.inProgressCount}
+                        canGenerateFinalVideo={canGenerateFinalVideo}
+                        isGeneratingFinalVideo={finalVideoGenerating}
                         activeMovieClip={activeMovieClip}
                         movieIndex={movieIndex}
                         moviePlaylist={moviePlaylist}
                         movieIsPlaying={movieIsPlaying}
                         movieVideoRef={movieVideoRef}
+                        onGenerateFinalVideo={() => void generateCurrentCutVideo()}
                         onTogglePlayback={toggleMoviePlayback}
                         onSelectMovieClip={selectMovieClip}
                         onLoadedData={handleActiveMovieLoadedData}

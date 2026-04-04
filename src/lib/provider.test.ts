@@ -202,4 +202,73 @@ describe("provider transition generation", () => {
       generate_audio: false,
     });
   });
+
+  test("uses Wan image-to-video parameters without Seedance-specific flags", async () => {
+    process.env.ATLASCLOUD_API_KEY = "test-key";
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "moviegen-provider-"));
+    const fromImagePath = path.join(tempDir, "frames", "frame-a", "approved.png");
+    const toImagePath = path.join(tempDir, "frames", "frame-b", "approved.png");
+
+    await fs.mkdir(path.dirname(fromImagePath), { recursive: true });
+    await fs.mkdir(path.dirname(toImagePath), { recursive: true });
+    await fs.writeFile(fromImagePath, "from-image");
+    await fs.writeFile(toImagePath, "to-image");
+
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input);
+
+      if (url === "https://api.atlascloud.ai/api/v1/model/uploadMedia") {
+        return jsonResponse({ data: { download_url: "https://cdn.example/frame.png" } });
+      }
+
+      if (url === "https://api.atlascloud.ai/api/v1/model/generateVideo") {
+        return jsonResponse({
+          data: {
+            outputs: ["https://cdn.example/transition.mp4"],
+          },
+        });
+      }
+
+      if (url === "https://cdn.example/transition.mp4") {
+        return new Response(Uint8Array.from([0, 1, 2, 3]), {
+          status: 200,
+          headers: { "Content-Type": "video/mp4" },
+        });
+      }
+
+      throw new Error(`Unexpected fetch request: ${url}`);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generateTransitionVideo({
+      projectPath: tempDir,
+      transitionId: "transition-1",
+      modelId: "alibaba/wan-2.7/image-to-video",
+      prompt: "Bridge these two frames with subtle motion.",
+      fromImagePath,
+      toImagePath,
+      posterPath: path.join("frames", "frame-a", "approved.png"),
+      duration: 15,
+      size: "1920x1080",
+      fps: 24,
+      settings: {
+        resolution: "1080p",
+        duration: "15",
+      },
+    });
+
+    const generateVideoRequest = fetchMock.mock.calls[2];
+    expect(JSON.parse(String(generateVideoRequest?.[1]?.body))).toEqual({
+      model: "alibaba/wan-2.7/image-to-video",
+      prompt: "Bridge these two frames with subtle motion.",
+      image: "https://cdn.example/frame.png",
+      last_image: "https://cdn.example/frame.png",
+      width: 1920,
+      height: 1080,
+      duration: 15,
+      fps: 24,
+    });
+  });
 });
