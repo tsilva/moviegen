@@ -802,7 +802,7 @@ export function buildProjectSnapshot(
         fromFrame.currentVersion?.id ?? null,
         toFrame.currentVersion?.id ?? null,
       );
-      const galleryVersions = getTransitionGalleryVersions(
+      const compatibleGalleryVersions = getTransitionGalleryVersions(
         transition,
         fromFrame.currentVersion?.id ?? null,
         toFrame.currentVersion?.id ?? null,
@@ -814,6 +814,13 @@ export function buildProjectSnapshot(
         toFrame.currentVersion?.id ?? null,
       );
       const currentVideo = hasCurrentApproval ? approvedVideoVersion : latestMatchingVideo;
+      const previewVideo = currentVideo ?? approvedVideoVersion ?? latestVideoVersion;
+      const galleryVersions =
+        compatibleGalleryVersions.length > 0
+          ? compatibleGalleryVersions
+          : previewVideo
+            ? [previewVideo]
+            : compatibleGalleryVersions;
       const videoStatus = deriveTransitionVideoStatus({
         transition,
         jobs: transitionJobs,

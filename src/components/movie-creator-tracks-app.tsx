@@ -29,6 +29,7 @@ import {
   IconFolderOpen,
   IconSettings,
   IconInfoCircle,
+  IconZoomIn,
   IconPlayerPause,
   IconPlayerPlay,
   IconPlayerStop,
@@ -79,6 +80,13 @@ type AssetInfoTarget = {
   responsePayload: unknown;
 };
 
+type AssetPreviewTarget = {
+  title: string;
+  kind: "frame" | "transition";
+  src: string;
+  posterSrc?: string;
+};
+
 type FailedAssetInfo = AssetInfoTarget & {
   label: string;
 };
@@ -108,6 +116,7 @@ type AssetGalleryProps<TVersion extends FrameVersion | TransitionVersion> = {
   onDropFiles?: (files: File[]) => void | Promise<void>;
   onSelectVersion: (versionId: string) => void;
   onOpenInfo: (target: AssetInfoTarget) => void;
+  onOpenPreview: (target: AssetPreviewTarget) => void;
   onStopPending?: () => void | Promise<void>;
 };
 
@@ -254,15 +263,10 @@ function formatGenerationSettingsSummary(modelId: string, settings: GenerationSe
 }
 
 function buildGenerationOverrides(
-  enabled: boolean,
   modelId: string,
   systemPromptTemplate: string,
   settings: GenerationSettings,
 ): GenerationOverrides {
-  if (!enabled) {
-    return {};
-  }
-
   return {
     modelId,
     systemPromptTemplate,
@@ -390,6 +394,7 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
   onDropFiles,
   onSelectVersion,
   onOpenInfo,
+  onOpenPreview,
   onStopPending,
 }: AssetGalleryProps<TVersion>) {
   const [isDropActive, setIsDropActive] = useState(false);
@@ -655,6 +660,31 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
                     color="dark"
                     radius="xl"
                     size="sm"
+                    aria-label={`Open ${kind === "frame" ? "asset" : "clip"} preview`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpenPreview({
+                        title: getVersionLabel?.(version) ?? version.model,
+                        kind,
+                        src: assetUrl("thumbnailPath" in version ? version.outputPath : version.outputPath),
+                        posterSrc: "posterPath" in version ? assetUrl(version.posterPath) || undefined : undefined,
+                      });
+                    }}
+                    style={{
+                      position: "absolute",
+                      top: 8,
+                      left: 8,
+                      zIndex: 2,
+                      background: "rgba(8, 12, 18, 0.78)",
+                    }}
+                  >
+                    <IconZoomIn size={14} aria-hidden="true" />
+                  </ActionIcon>
+                  <ActionIcon
+                    variant="filled"
+                    color="dark"
+                    radius="xl"
+                    size="sm"
                     aria-label={`Show generation request and response for ${getVersionLabel?.(version) ?? version.model}`}
                     onClick={(event) => {
                       event.stopPropagation();
@@ -712,10 +742,12 @@ function TrackSlotTile({
   slot,
   selected,
   onSelect,
+  onOpenPreview,
 }: {
   slot: TrackSlotView;
   selected: boolean;
   onSelect: () => void;
+  onOpenPreview: (target: AssetPreviewTarget) => void;
 }) {
   const previewSrc = slot.previewPath ? assetUrl(slot.previewPath) : "";
   const detailText = slot.promptPlaceholder ? slot.summary : slot.prompt;
@@ -755,14 +787,43 @@ function TrackSlotTile({
           }}
         >
           {previewSrc ? (
-            <Image
-              src={previewSrc}
-              alt={slot.label}
-              fill
-              unoptimized
-              sizes="300px"
-              style={{ objectFit: "cover", display: "block" }}
-            />
+            <>
+              {slot.zoomPath ? (
+                <ActionIcon
+                  variant="filled"
+                  color="dark"
+                  radius="xl"
+                  size="sm"
+                  aria-label={`Open ${slot.label} preview`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onOpenPreview({
+                      title: slot.label,
+                      kind: slot.entryKind === "frame" ? "frame" : "transition",
+                      src: assetUrl(slot.zoomPath),
+                      posterSrc: slot.posterPath ? assetUrl(slot.posterPath) || undefined : undefined,
+                    });
+                  }}
+                  style={{
+                    position: "absolute",
+                    top: 8,
+                    right: 8,
+                    zIndex: 2,
+                    background: "rgba(8, 12, 18, 0.78)",
+                  }}
+                >
+                  <IconZoomIn size={14} aria-hidden="true" />
+                </ActionIcon>
+              ) : null}
+              <Image
+                src={previewSrc}
+                alt={slot.label}
+                fill
+                unoptimized
+                sizes="300px"
+                style={{ objectFit: "cover", display: "block" }}
+              />
+            </>
           ) : (
             <Flex h="100%" align="center" justify="center" p="xs">
               <Text c="dimmed" size="xs" ta="center">
@@ -829,12 +890,14 @@ function TrackCard({
   track,
   selectedSlot,
   onSelectSlot,
+  onOpenPreview,
   onDeleteTrack,
   cardRef,
 }: {
   track: TrackView;
   selectedSlot: TrackSlotSelection | null;
   onSelectSlot: (selection: TrackSlotSelection) => void;
+  onOpenPreview: (target: AssetPreviewTarget) => void;
   onDeleteTrack: () => void;
   cardRef: (node: HTMLDivElement | null) => void;
 }) {
@@ -880,6 +943,7 @@ function TrackCard({
               selectedSlot?.trackId === track.id &&
               selectedSlot.slotKind === "startFrame"
             }
+            onOpenPreview={onOpenPreview}
             onSelect={() =>
               onSelectSlot({
                 trackId: track.id,
@@ -893,6 +957,7 @@ function TrackCard({
               selectedSlot?.trackId === track.id &&
               selectedSlot.slotKind === "transition"
             }
+            onOpenPreview={onOpenPreview}
             onSelect={() =>
               onSelectSlot({
                 trackId: track.id,
@@ -906,6 +971,7 @@ function TrackCard({
               selectedSlot?.trackId === track.id &&
               selectedSlot.slotKind === "endFrame"
             }
+            onOpenPreview={onOpenPreview}
             onSelect={() =>
               onSelectSlot({
                 trackId: track.id,
@@ -981,17 +1047,60 @@ function AssetInfoModal({ target, onClose }: { target: AssetInfoTarget | null; o
   );
 }
 
+function AssetPreviewModal({ target, onClose }: { target: AssetPreviewTarget | null; onClose: () => void }) {
+  if (!target) {
+    return null;
+  }
+
+  return (
+    <Modal opened onClose={onClose} size="min(1280px, 96vw)" centered title={target.title}>
+      <Flex justify="center" align="center" mih="min(70vh, 900px)">
+        {target.kind === "frame" ? (
+          <Box
+            component="img"
+            src={target.src}
+            alt={target.title}
+            style={{
+              display: "block",
+              width: "auto",
+              height: "auto",
+              maxWidth: "100%",
+              maxHeight: "70vh",
+              objectFit: "contain",
+            }}
+          />
+        ) : (
+          <Box
+            component="video"
+            src={target.src}
+            poster={target.posterSrc}
+            controls
+            autoPlay
+            playsInline
+            style={{
+              display: "block",
+              width: "auto",
+              height: "auto",
+              maxWidth: "100%",
+              maxHeight: "70vh",
+              objectFit: "contain",
+            }}
+          />
+        )}
+      </Flex>
+    </Modal>
+  );
+}
+
 type GenerationOverrideModalProps = {
   opened: boolean;
   title: string;
   assetKind: "frame" | "transition";
-  overrideEnabled: boolean;
   modelId: string;
   systemPromptTemplate: string;
   settings: GenerationSettings;
   onClose: () => void;
   onSave: () => void | Promise<void>;
-  onOverrideEnabledChange: (value: boolean) => void;
   onModelIdChange: (modelId: string) => void;
   onSystemPromptTemplateChange: (value: string) => void;
   onSettingChange: (key: string, value: string | boolean) => void;
@@ -1001,13 +1110,11 @@ function GenerationOverrideModal({
   opened,
   title,
   assetKind,
-  overrideEnabled,
   modelId,
   systemPromptTemplate,
   settings,
   onClose,
   onSave,
-  onOverrideEnabledChange,
   onModelIdChange,
   onSystemPromptTemplateChange,
   onSettingChange,
@@ -1015,27 +1122,18 @@ function GenerationOverrideModal({
   return (
     <Modal opened={opened} onClose={onClose} title={title} size="lg">
       <Stack gap="md">
-        <Switch
-          label="Override global settings for this item"
-          checked={overrideEnabled}
-          onChange={(event) => onOverrideEnabledChange(event.currentTarget.checked)}
-        />
         <Text c="dimmed" size="sm">
-          {overrideEnabled
-            ? "This item will use its own model, system prompt, and model-specific settings."
-            : "This item will inherit the current global defaults."}
+          These settings are saved as overrides for this item.
         </Text>
-        <Box style={{ opacity: overrideEnabled ? 1 : 0.6, pointerEvents: overrideEnabled ? "auto" : "none" }}>
-          <GenerationConfigFields
-            assetKind={assetKind}
-            modelId={modelId}
-            systemPromptTemplate={systemPromptTemplate}
-            settings={settings}
-            onModelIdChange={onModelIdChange}
-            onSystemPromptTemplateChange={onSystemPromptTemplateChange}
-            onSettingChange={onSettingChange}
-          />
-        </Box>
+        <GenerationConfigFields
+          assetKind={assetKind}
+          modelId={modelId}
+          systemPromptTemplate={systemPromptTemplate}
+          settings={settings}
+          onModelIdChange={onModelIdChange}
+          onSystemPromptTemplateChange={onSystemPromptTemplateChange}
+          onSettingChange={onSettingChange}
+        />
         <Group justify="space-between">
           <Button variant="default" onClick={onClose}>
             Cancel
@@ -1296,6 +1394,7 @@ export function MovieCreatorApp({
   const [snapshot, setSnapshot] = useState<ProjectSnapshot | null>(initialSnapshot);
   const [projectPath, setProjectPath] = useState(initialProjectPath);
   const [assetInfoTarget, setAssetInfoTarget] = useState<AssetInfoTarget | null>(null);
+  const [assetPreviewTarget, setAssetPreviewTarget] = useState<AssetPreviewTarget | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<TrackSlotSelection | null>(getSelectionFromSnapshot(initialSnapshot));
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [projectSettingsModalOpen, setProjectSettingsModalOpen] = useState(false);
@@ -1309,7 +1408,6 @@ export function MovieCreatorApp({
   const [frameUsePreviousDraft, setFrameUsePreviousDraft] = useState(false);
   const [frameConfigDirty, setFrameConfigDirty] = useState(false);
   const [frameSettingsModalOpen, setFrameSettingsModalOpen] = useState(false);
-  const [frameOverrideEnabledDraft, setFrameOverrideEnabledDraft] = useState(false);
   const [frameOverrideModelIdDraft, setFrameOverrideModelIdDraft] = useState("");
   const [frameOverrideSystemPromptTemplateDraft, setFrameOverrideSystemPromptTemplateDraft] = useState(
     DEFAULT_SYSTEM_PROMPT_TEMPLATE,
@@ -1318,7 +1416,6 @@ export function MovieCreatorApp({
   const [transitionPromptDraft, setTransitionPromptDraft] = useState("");
   const [transitionConfigDirty, setTransitionConfigDirty] = useState(false);
   const [transitionSettingsModalOpen, setTransitionSettingsModalOpen] = useState(false);
-  const [transitionOverrideEnabledDraft, setTransitionOverrideEnabledDraft] = useState(false);
   const [transitionOverrideModelIdDraft, setTransitionOverrideModelIdDraft] = useState("");
   const [transitionOverrideSystemPromptTemplateDraft, setTransitionOverrideSystemPromptTemplateDraft] = useState(
     DEFAULT_SYSTEM_PROMPT_TEMPLATE,
@@ -1391,6 +1488,10 @@ export function MovieCreatorApp({
     setAssetInfoTarget(target);
   }
 
+  function openAssetPreview(target: AssetPreviewTarget) {
+    setAssetPreviewTarget(target);
+  }
+
   function getFailedAssetInfo(
     kind: "frame" | "transition",
     job: FrameView["latestErrorJob"] | TransitionView["latestErrorJob"],
@@ -1427,6 +1528,7 @@ export function MovieCreatorApp({
     setMoviePlaying(false);
     movieVideoRef.current?.pause();
     setAssetInfoTarget(null);
+    setAssetPreviewTarget(null);
 
     if (options?.closeProjectModal ?? true) {
       setProjectModalOpen(false);
@@ -1532,7 +1634,6 @@ export function MovieCreatorApp({
           entryId: string;
           prompt: string;
           usePreviousFrameAsReference: boolean;
-          overrideEnabled: boolean;
           modelId: string;
           systemPromptTemplate: string;
           settings: GenerationSettings;
@@ -1541,7 +1642,6 @@ export function MovieCreatorApp({
           kind: "transition";
           entryId: string;
           prompt: string;
-          overrideEnabled: boolean;
           modelId: string;
           systemPromptTemplate: string;
           settings: GenerationSettings;
@@ -1552,14 +1652,12 @@ export function MovieCreatorApp({
         setFramePromptDraft("");
         setFrameUsePreviousDraft(false);
         setFrameSettingsModalOpen(false);
-        setFrameOverrideEnabledDraft(false);
         setFrameOverrideModelIdDraft("");
         setFrameOverrideSystemPromptTemplateDraft(DEFAULT_SYSTEM_PROMPT_TEMPLATE);
         setFrameOverrideGenerationSettingsDraft({});
         setFrameConfigDirty(false);
         setTransitionPromptDraft("");
         setTransitionSettingsModalOpen(false);
-        setTransitionOverrideEnabledDraft(false);
         setTransitionOverrideModelIdDraft("");
         setTransitionOverrideSystemPromptTemplateDraft(DEFAULT_SYSTEM_PROMPT_TEMPLATE);
         setTransitionOverrideGenerationSettingsDraft({});
@@ -1591,7 +1689,6 @@ export function MovieCreatorApp({
         setFramePromptDraft(nextState.prompt);
         setFrameUsePreviousDraft(nextState.usePreviousFrameAsReference);
         setFrameSettingsModalOpen(false);
-        setFrameOverrideEnabledDraft(nextState.overrideEnabled);
         setFrameOverrideModelIdDraft(nextState.modelId);
         setFrameOverrideSystemPromptTemplateDraft(nextState.systemPromptTemplate);
         setFrameOverrideGenerationSettingsDraft(getDraftSettingsForModel(nextState.modelId, nextState.settings));
@@ -1602,7 +1699,6 @@ export function MovieCreatorApp({
 
       setTransitionPromptDraft(nextState.prompt);
       setTransitionSettingsModalOpen(false);
-      setTransitionOverrideEnabledDraft(nextState.overrideEnabled);
       setTransitionOverrideModelIdDraft(nextState.modelId);
       setTransitionOverrideSystemPromptTemplateDraft(nextState.systemPromptTemplate);
       setTransitionOverrideGenerationSettingsDraft(getDraftSettingsForModel(nextState.modelId, nextState.settings));
@@ -1619,7 +1715,6 @@ export function MovieCreatorApp({
         entryId: selectedFrame.id,
         prompt: draft.prompt,
         usePreviousFrameAsReference: draft.usePreviousFrameAsReference,
-        overrideEnabled: hasGenerationOverrides(selectedFrame.generationOverrides),
         modelId: draft.modelId,
         systemPromptTemplate: draft.systemPromptTemplate,
         settings: draft.settings,
@@ -1633,7 +1728,6 @@ export function MovieCreatorApp({
         kind: "transition",
         entryId: selectedTransition.id,
         prompt: draft.prompt,
-        overrideEnabled: hasGenerationOverrides(selectedTransition.generationOverrides),
         modelId: draft.modelId,
         systemPromptTemplate: draft.systemPromptTemplate,
         settings: draft.settings,
@@ -2186,7 +2280,6 @@ export function MovieCreatorApp({
       return;
     }
 
-    setFrameOverrideEnabledDraft(selectedFrameHasOverrides);
     setFrameOverrideModelIdDraft(selectedFrameGenerationDraft.modelId);
     setFrameOverrideSystemPromptTemplateDraft(selectedFrameGenerationDraft.systemPromptTemplate);
     setFrameOverrideGenerationSettingsDraft(
@@ -2201,7 +2294,6 @@ export function MovieCreatorApp({
       return;
     }
 
-    setFrameOverrideEnabledDraft(selectedFrameHasOverrides);
     setFrameOverrideModelIdDraft(selectedFrameGenerationDraft.modelId);
     setFrameOverrideSystemPromptTemplateDraft(selectedFrameGenerationDraft.systemPromptTemplate);
     setFrameOverrideGenerationSettingsDraft(
@@ -2221,7 +2313,6 @@ export function MovieCreatorApp({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           generationOverrides: buildGenerationOverrides(
-            frameOverrideEnabledDraft,
             frameOverrideModelIdDraft,
             frameOverrideSystemPromptTemplateDraft,
             frameOverrideGenerationSettingsDraft,
@@ -2280,7 +2371,6 @@ export function MovieCreatorApp({
       return;
     }
 
-    setTransitionOverrideEnabledDraft(selectedTransitionHasOverrides);
     setTransitionOverrideModelIdDraft(selectedTransitionGenerationDraft.modelId);
     setTransitionOverrideSystemPromptTemplateDraft(selectedTransitionGenerationDraft.systemPromptTemplate);
     setTransitionOverrideGenerationSettingsDraft(
@@ -2295,7 +2385,6 @@ export function MovieCreatorApp({
       return;
     }
 
-    setTransitionOverrideEnabledDraft(selectedTransitionHasOverrides);
     setTransitionOverrideModelIdDraft(selectedTransitionGenerationDraft.modelId);
     setTransitionOverrideSystemPromptTemplateDraft(selectedTransitionGenerationDraft.systemPromptTemplate);
     setTransitionOverrideGenerationSettingsDraft(
@@ -2315,7 +2404,6 @@ export function MovieCreatorApp({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           generationOverrides: buildGenerationOverrides(
-            transitionOverrideEnabledDraft,
             transitionOverrideModelIdDraft,
             transitionOverrideSystemPromptTemplateDraft,
             transitionOverrideGenerationSettingsDraft,
@@ -2609,6 +2697,7 @@ export function MovieCreatorApp({
                                 selectSlot(selection);
                                 scrollTrackIntoView(track.id);
                               }}
+                              onOpenPreview={openAssetPreview}
                               onDeleteTrack={() => void deleteTrack(track)}
                               cardRef={(node) => {
                                 trackCardRefs.current[track.id] = node;
@@ -2789,6 +2878,7 @@ export function MovieCreatorApp({
                               onDropFiles={(files) => void handleFrameReferenceDrop(selectedFrame, files)}
                               onSelectVersion={(versionId) => void selectFrameVersion(selectedFrame, versionId)}
                               onOpenInfo={openAssetInfo}
+                              onOpenPreview={openAssetPreview}
                               onStopPending={() => void stopSelectedFrameGeneration(selectedFrame)}
                             />
                           </Stack>
@@ -2904,6 +2994,7 @@ export function MovieCreatorApp({
                               getVersionLabel={(version) => version.sourcePrompt?.trim() || "No transition prompt yet"}
                               onSelectVersion={(versionId) => void selectTransitionVersion(selectedTransition, versionId)}
                               onOpenInfo={openAssetInfo}
+                              onOpenPreview={openAssetPreview}
                               onStopPending={() => void stopSelectedTransitionGeneration(selectedTransition)}
                             />
                           </Stack>
@@ -2938,18 +3029,17 @@ export function MovieCreatorApp({
       </Box>
 
       <AssetInfoModal target={assetInfoTarget} onClose={() => setAssetInfoTarget(null)} />
+      <AssetPreviewModal target={assetPreviewTarget} onClose={() => setAssetPreviewTarget(null)} />
 
       <GenerationOverrideModal
         opened={frameSettingsModalOpen}
         onClose={closeSelectedFrameSettings}
         title={selectedFrame ? `Frame ${selectedFrame.position + 1} Settings` : "Frame Settings"}
         assetKind="frame"
-        overrideEnabled={frameOverrideEnabledDraft}
         modelId={frameOverrideModelIdDraft}
         systemPromptTemplate={frameOverrideSystemPromptTemplateDraft}
         settings={frameOverrideGenerationSettingsDraft}
         onSave={saveSelectedFrameSettings}
-        onOverrideEnabledChange={setFrameOverrideEnabledDraft}
         onModelIdChange={handleFrameOverrideModelDraftChange}
         onSystemPromptTemplateChange={setFrameOverrideSystemPromptTemplateDraft}
         onSettingChange={(key, value) => {
@@ -2965,12 +3055,10 @@ export function MovieCreatorApp({
         onClose={closeSelectedTransitionSettings}
         title={selectedTransition ? selectedSlotView?.label ?? "Transition Settings" : "Transition Settings"}
         assetKind="transition"
-        overrideEnabled={transitionOverrideEnabledDraft}
         modelId={transitionOverrideModelIdDraft}
         systemPromptTemplate={transitionOverrideSystemPromptTemplateDraft}
         settings={transitionOverrideGenerationSettingsDraft}
         onSave={saveSelectedTransitionSettings}
-        onOverrideEnabledChange={setTransitionOverrideEnabledDraft}
         onModelIdChange={handleTransitionOverrideModelDraftChange}
         onSystemPromptTemplateChange={setTransitionOverrideSystemPromptTemplateDraft}
         onSettingChange={(key, value) => {

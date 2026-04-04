@@ -482,6 +482,50 @@ describe("project transition reconciliation", () => {
     ]);
   });
 
+  test("transition gallery falls back to the visible preview clip when no compatible clips remain", () => {
+    const manifest = createEmptyManifest("test");
+    const first = frame("A");
+    const second = frame("B");
+    const firstVersion = frameVersion("framever_a");
+    const secondVersion = frameVersion("framever_b");
+    first.versions.push(firstVersion);
+    second.versions.push(secondVersion);
+    first.approvedVersionId = firstVersion.id;
+    second.approvedVersionId = secondVersion.id;
+    manifest.frames = [first, second].map((item, index) => ({ ...item, position: index }));
+
+    reconcileTransitions(manifest);
+
+    const transition = manifest.transitions[0]!;
+    transition.transitionPrompt = "Slow cinematic push";
+    transition.promptRevision = 2;
+    transition.confirmedFromVersionId = firstVersion.id;
+    transition.confirmedToVersionId = secondVersion.id;
+
+    const latestGeneratedVideo = {
+      id: createId("transitionver"),
+      model: "mock-video-model",
+      inputPayload: {},
+      outputPath: "transitions/generated.mp4",
+      posterPath: "transitions/generated.png",
+      generationJobId: createId("job"),
+      createdAt: nowIso(),
+      reviewerDecision: "unreviewed" as const,
+      reviewerNotes: "",
+      promptRevision: 1,
+      fromApprovedVersionId: firstVersion.id,
+      toApprovedVersionId: secondVersion.id,
+    };
+
+    transition.versions.push(latestGeneratedVideo);
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+    expect(snapshot.transitions[0]?.latestVideoVersion?.id).toBe(latestGeneratedVideo.id);
+    expect(snapshot.transitions[0]?.galleryVersions.map((version) => version.id)).toEqual([
+      latestGeneratedVideo.id,
+    ]);
+  });
+
   test("transition disabled reason explains blocked generation when endpoint frames are missing", () => {
     const manifest = createEmptyManifest("test");
     const first = frame("A");

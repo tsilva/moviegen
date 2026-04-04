@@ -201,9 +201,30 @@ describe("movie creator frame helpers", () => {
     expect(getFrameGenerationDraft(frame, selectedVersion.id)).toEqual({
       modelId: "alibaba/wan-2.7/image-edit",
       prompt: "Selected generation prompt",
-      settings: { resolution: "480p" },
+      settings: { resolution: "720p" },
       systemPromptTemplate: "{{prompt}}",
       usePreviousFrameAsReference: false,
+    });
+  });
+
+  test("prefers the live frame prompt when composing a new generation", () => {
+    const selectedVersion = createVersion("framever_selected", {
+      sourcePrompt: "Older generated prompt",
+      usePreviousFrameAsReference: false,
+    });
+    const frame = createFrameView({
+      imagePrompt: "Live frame prompt",
+      galleryVersions: [selectedVersion],
+      currentVersion: selectedVersion,
+      latestVersion: selectedVersion,
+    });
+
+    expect(getFrameGenerationDraft(frame, "__add__")).toEqual({
+      modelId: "alibaba/wan-2.7/image-edit",
+      prompt: "Live frame prompt",
+      settings: { resolution: "720p" },
+      systemPromptTemplate: "{{prompt}}",
+      usePreviousFrameAsReference: true,
     });
   });
 
@@ -314,6 +335,31 @@ describe("movie creator transition helpers", () => {
     expect(getTransitionGenerationDraft(transition, selectedVersion.id)).toEqual({
       modelId: "bytedance/seedance-v1.5-pro/image-to-video",
       prompt: "Selected clip prompt",
+      settings: {
+        aspectRatio: "1:1",
+        cameraFixed: true,
+        duration: "4",
+        generateAudio: true,
+        resolution: "480p",
+      },
+      systemPromptTemplate: "{{prompt}}",
+    });
+  });
+
+  test("prefers the live transition prompt when composing a new generation", () => {
+    const selectedVersion = createTransitionVersion("transitionver_selected", {
+      sourcePrompt: "Older generated transition prompt",
+    });
+    const transition = createTransitionView({
+      transitionPrompt: "Live transition prompt",
+      galleryVersions: [selectedVersion],
+      latestVideoVersion: selectedVersion,
+      currentVideo: selectedVersion,
+    });
+
+    expect(getTransitionGenerationDraft(transition, "__add__")).toEqual({
+      modelId: "bytedance/seedance-v1.5-pro/image-to-video",
+      prompt: "Live transition prompt",
       settings: {
         aspectRatio: "1:1",
         cameraFixed: true,

@@ -71,7 +71,7 @@ export const MODEL_REGISTRY: Record<string, GenerationModelDefinition> = {
         key: "resolution",
         label: "Resolution",
         kind: "select",
-        defaultValue: "480p",
+        defaultValue: "720p",
         options: FRAME_RESOLUTION_OPTIONS,
       },
     ],

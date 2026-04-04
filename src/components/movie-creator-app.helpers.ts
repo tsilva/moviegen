@@ -82,8 +82,9 @@ export function getFrameGenerationDraft(
   generationDefaults?: ProjectGenerationDefaults | null,
 ) {
   const selectedVersion = findFrameVersionByTileId(frame, selectedGalleryTileId);
-  const prompt =
-    selectedVersion?.sourcePrompt ?? getFallbackFramePrompt(frame) ?? "";
+  const prompt = selectedVersion
+    ? selectedVersion.sourcePrompt ?? getFallbackFramePrompt(frame) ?? ""
+    : frame.imagePrompt ?? getFallbackFramePrompt(frame) ?? "";
   const generationSnapshot = selectedVersion?.generationSnapshot ?? resolveGenerationConfig({
     assetKind: "frame",
     prompt,
@@ -120,7 +121,9 @@ export function getTransitionGenerationDraft(
   const selectedVersion = selectedGalleryTileId
     ? findTransitionVersionByTileId(transition, selectedGalleryTileId)
     : null;
-  const prompt = selectedVersion?.sourcePrompt ?? getFallbackTransitionPrompt(transition) ?? "";
+  const prompt = selectedVersion
+    ? selectedVersion.sourcePrompt ?? getFallbackTransitionPrompt(transition) ?? ""
+    : transition.transitionPrompt ?? getFallbackTransitionPrompt(transition) ?? "";
   const generationSnapshot = selectedVersion?.generationSnapshot ?? resolveGenerationConfig({
     assetKind: "transition",
     prompt,
