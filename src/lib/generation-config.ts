@@ -18,6 +18,25 @@ import type {
 
 export type ResolvedGenerationConfig = GenerationSnapshot;
 
+export function getProjectDefaultModelId(
+  generationDefaults: ProjectGenerationDefaults | null | undefined,
+  assetKind: GenerationAssetKind,
+) {
+  return generationDefaults?.selectedModels?.[assetKind] ?? getDefaultModelIdForAssetKind(assetKind);
+}
+
+export function hasGenerationOverrides(overrides: GenerationOverrides | null | undefined) {
+  if (!overrides) {
+    return false;
+  }
+
+  return (
+    overrides.modelId != null ||
+    overrides.systemPromptTemplate != null ||
+    Object.keys(overrides.settings ?? {}).length > 0
+  );
+}
+
 export function validateSystemPromptTemplate(template: string) {
   const matches = template.match(/\{\{prompt\}\}/g) ?? [];
   if (matches.length !== 1) {
@@ -91,13 +110,14 @@ export function sanitizeGenerationSettings(modelId: string, settings: Generation
 export function normalizeGenerationOverrides(
   assetKind: GenerationAssetKind,
   overrides: GenerationOverrides | null | undefined,
+  defaultModelId?: string,
 ): GenerationOverrides {
   if (!overrides) {
     return {};
   }
 
   const modelId = overrides.modelId ?? undefined;
-  const effectiveModelId = modelId ?? getDefaultModelIdForAssetKind(assetKind);
+  const effectiveModelId = modelId ?? defaultModelId ?? getDefaultModelIdForAssetKind(assetKind);
   const definition = getModelDefinition(effectiveModelId);
   if (!definition || definition.assetKind !== assetKind) {
     throw new Error(`Model "${effectiveModelId}" is not supported for ${assetKind} generation`);
@@ -145,7 +165,7 @@ export function resolveGenerationConfig(input: {
   assetOverrides?: GenerationOverrides | null;
   requestOverrides?: GenerationOverrides | null;
 }): ResolvedGenerationConfig {
-  const defaultModelId = getDefaultModelIdForAssetKind(input.assetKind);
+  const defaultModelId = getProjectDefaultModelId(input.generationDefaults, input.assetKind);
   const modelId =
     input.requestOverrides?.modelId ??
     input.assetOverrides?.modelId ??
@@ -156,8 +176,8 @@ export function resolveGenerationConfig(input: {
   }
 
   const modelDefaults = getModelDefaults(input.generationDefaults, modelId);
-  const assetOverrides = normalizeGenerationOverrides(input.assetKind, input.assetOverrides);
-  const requestOverrides = normalizeGenerationOverrides(input.assetKind, input.requestOverrides);
+  const assetOverrides = normalizeGenerationOverrides(input.assetKind, input.assetOverrides, modelId);
+  const requestOverrides = normalizeGenerationOverrides(input.assetKind, input.requestOverrides, modelId);
   const systemPromptTemplate =
     requestOverrides.systemPromptTemplate ??
     assetOverrides.systemPromptTemplate ??

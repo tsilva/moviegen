@@ -155,6 +155,38 @@ describe("project transition reconciliation", () => {
     ]);
   });
 
+  test("retains the latest failed frame job in the snapshot", () => {
+    const manifest = createEmptyManifest("test");
+    const draft = frame("Broken");
+    const createdAt = nowIso();
+    manifest.frames = [{ ...draft, position: 0 }];
+    manifest.jobs.push({
+      id: createId("job"),
+      kind: "frame_image",
+      targetId: draft.id,
+      targetParentId: draft.id,
+      provider: "atlas",
+      model: "wan",
+      status: "error",
+      requestPayload: { prompt: "broken prompt" },
+      providerPredictionId: "pred_1",
+      errorMessage: "Upstream provider failed",
+      startedAt: createdAt,
+      completedAt: createdAt,
+      createdAt,
+      updatedAt: createdAt,
+    });
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+
+    expect(snapshot.frames[0]?.status).toBe("error");
+    expect(snapshot.frames[0]?.latestErrorJob).toMatchObject({
+      status: "error",
+      errorMessage: "Upstream provider failed",
+      requestPayload: { prompt: "broken prompt" },
+    });
+  });
+
   test("transition next action becomes generate once prompt exists and endpoints are available", () => {
     const manifest = createEmptyManifest("test");
     const first = frame("A");

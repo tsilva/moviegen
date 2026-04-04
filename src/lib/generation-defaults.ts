@@ -6,9 +6,9 @@ import {
   getModelDefaultSettings,
 } from "@/lib/generation-models";
 
-const DEFAULT_VIDEO_RESOLUTION = "720p";
-const DEFAULT_VIDEO_ASPECT_RATIO = "16:9";
-const DEFAULT_VIDEO_CAMERA_FIXED = false;
+const DEFAULT_VIDEO_RESOLUTION = "480p";
+const DEFAULT_VIDEO_ASPECT_RATIO = "1:1";
+const DEFAULT_VIDEO_CAMERA_FIXED = true;
 const DEFAULT_VIDEO_GENERATE_AUDIO = true;
 
 function parseBooleanEnv(value: string | undefined, fallback: boolean, envName: string) {
@@ -58,6 +58,10 @@ export function getVideoGenerateAudioDefault() {
 
 export function createDefaultGenerationDefaults(): ProjectGenerationDefaults {
   return {
+    selectedModels: {
+      frame: DEFAULT_FRAME_MODEL_ID,
+      transition: DEFAULT_TRANSITION_MODEL_ID,
+    },
     byModel: {
       [DEFAULT_FRAME_MODEL_ID]: {
         systemPromptTemplate: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
@@ -76,4 +80,3 @@ export function createDefaultGenerationDefaults(): ProjectGenerationDefaults {
     },
   };
 }
-

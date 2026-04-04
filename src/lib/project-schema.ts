@@ -18,6 +18,12 @@ const generationSnapshotSchema = z.object({
   resolvedPrompt: z.string(),
 });
 const generationDefaultsSchema = z.object({
+  selectedModels: z
+    .object({
+      frame: z.string(),
+      transition: z.string(),
+    })
+    .optional(),
   byModel: z.record(
     z.string(),
     z.object({
@@ -157,7 +163,22 @@ export const projectManifestSchema = z.object({
       selectedFrameId: ui.selectedFrameId ?? null,
       selectedTransitionId: ui.selectedTransitionId ?? null,
     })),
-}).transform((manifest) => ({
-  ...manifest,
-  generationDefaults: manifest.generationDefaults ?? createDefaultGenerationDefaults(),
-}));
+}).transform((manifest) => {
+  const defaultGenerationDefaults = createDefaultGenerationDefaults();
+
+  return {
+    ...manifest,
+    generationDefaults: {
+      ...defaultGenerationDefaults,
+      ...(manifest.generationDefaults ?? {}),
+      selectedModels: {
+        ...defaultGenerationDefaults.selectedModels,
+        ...(manifest.generationDefaults?.selectedModels ?? {}),
+      },
+      byModel: {
+        ...defaultGenerationDefaults.byModel,
+        ...(manifest.generationDefaults?.byModel ?? {}),
+      },
+    },
+  };
+});

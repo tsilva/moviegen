@@ -14,6 +14,10 @@ export type ModelGenerationDefaults = {
 };
 
 export type ProjectGenerationDefaults = {
+  selectedModels: {
+    frame: string;
+    transition: string;
+  };
   byModel: Record<string, ModelGenerationDefaults>;
 };
 
@@ -177,6 +181,7 @@ export type FrameView = Frame & {
   latestVersion: FrameVersion | null;
   currentVersion: FrameVersion | null;
   galleryVersions: FrameVersion[];
+  latestErrorJob: GenerationJob | null;
   hasCurrentApproval: boolean;
   queuedJobs: number;
   nextAction: FrameNextAction;
@@ -196,6 +201,7 @@ export type TransitionView = Transition & {
   latestVideoVersion: TransitionVersion | null;
   currentVideo: TransitionVersion | null;
   galleryVersions: TransitionVersion[];
+  latestErrorJob: GenerationJob | null;
   hasCurrentApproval: boolean;
   isStale: boolean;
   nextAction: TransitionNextAction;

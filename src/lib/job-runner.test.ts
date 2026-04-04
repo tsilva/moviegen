@@ -25,6 +25,7 @@ import {
   reconcileTransitions,
   reorderFrames,
 } from "./project-ops";
+import { STANDARD_FRAME_MODEL_ID } from "./generation-models";
 import {
   cancelFrameGeneration,
   cancelTransitionGeneration,
@@ -582,6 +583,53 @@ describe("frame job anchoring", () => {
 
     expect(latestVersion?.sourcePrompt).toBe("Override prompt");
     expect(latestVersion?.usePreviousFrameAsReference).toBe(false);
+  });
+
+  test("derives frame generation size from the selected image model settings", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      draft.frames = [first];
+      return draft;
+    });
+
+    const queuedSnapshot = await enqueueFrameGeneration([manifest.frames[0]!.id], {
+      candidateCount: 1,
+      overridesByFrameId: {
+        [manifest.frames[0]!.id]: {
+          generationOverrides: {
+            modelId: STANDARD_FRAME_MODEL_ID,
+            settings: {
+              resolution: "1080p",
+            },
+          },
+        },
+      },
+      size: "1280x720",
+      seedMode: "random",
+    });
+
+    expect(queuedSnapshot.manifest.jobs[0]?.requestPayload).toMatchObject({
+      size: "1920x1080",
+      generationSnapshot: {
+        modelId: STANDARD_FRAME_MODEL_ID,
+        settings: {
+          resolution: "1080p",
+        },
+      },
+    });
+
+    await waitForFrameJobToSettle(projectPath);
+
+    expect(generateFrameImagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelId: STANDARD_FRAME_MODEL_ID,
+        size: "1920x1080",
+      }),
+    );
   });
 
   test("uses the previous approved frame as the anchor reference", async () => {

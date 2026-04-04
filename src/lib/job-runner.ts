@@ -11,8 +11,12 @@ import {
   nowIso,
   reconcileTransitions,
 } from "@/lib/project-ops";
-import { normalizeGenerationOverrides, resolveGenerationConfig } from "@/lib/generation-config";
-import { getTransitionSizeFromSettings } from "@/lib/generation-models";
+import {
+  getProjectDefaultModelId,
+  normalizeGenerationOverrides,
+  resolveGenerationConfig,
+} from "@/lib/generation-config";
+import { getFrameSizeFromSettings, getTransitionSizeFromSettings } from "@/lib/generation-models";
 import { mutateCurrentProject, mutateProject, readProjectSnapshot } from "@/lib/project-store";
 import { generateFrameImages, generateTransitionVideo } from "@/lib/provider";
 import type {
@@ -930,6 +934,8 @@ function buildQueuedFrameJobs(
   usePreviousFrameAsReference: boolean,
   generationSnapshot: GenerationSnapshot,
 ): GenerationJob[] {
+  const size = getFrameSizeFromSettings(generationSnapshot.settings, options.size);
+
   return Array.from({ length: options.candidateCount }, (_, index) => {
     const timestamp = nowIso();
     const seed =
@@ -950,7 +956,7 @@ function buildQueuedFrameJobs(
         prompt: sourcePrompt,
         generationSnapshot,
         usePreviousFrameAsReference,
-        size: options.size,
+        size,
         seedMode: options.seedMode,
         seed,
       },
@@ -1089,7 +1095,11 @@ export async function enqueueFrameGeneration(
       }
 
       if (overrides?.generationOverrides !== undefined) {
-        frame.generationOverrides = normalizeGenerationOverrides("frame", overrides.generationOverrides);
+        frame.generationOverrides = normalizeGenerationOverrides(
+          "frame",
+          overrides.generationOverrides,
+          getProjectDefaultModelId(manifest.generationDefaults, "frame"),
+        );
       }
 
       const generationSnapshot = resolveFrameGenerationSnapshot(
@@ -1160,7 +1170,11 @@ export async function enqueueTransitionGeneration(
           : undefined;
 
       if (requestOverrides !== undefined) {
-        transition.generationOverrides = normalizeGenerationOverrides("transition", requestOverrides);
+        transition.generationOverrides = normalizeGenerationOverrides(
+          "transition",
+          requestOverrides,
+          getProjectDefaultModelId(manifest.generationDefaults, "transition"),
+        );
       }
 
       const generationSnapshot = resolveTransitionGenerationSnapshot(

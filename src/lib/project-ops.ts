@@ -92,6 +92,17 @@ function getFrameJobs(frameId: string, jobs: GenerationJob[]) {
   return jobs.filter((job) => job.targetParentId === frameId);
 }
 
+function getLatestErroredJob(targetParentId: string, jobs: GenerationJob[]) {
+  for (let index = jobs.length - 1; index >= 0; index -= 1) {
+    const job = jobs[index];
+    if (job?.targetParentId === targetParentId && job.status === "error") {
+      return job;
+    }
+  }
+
+  return null;
+}
+
 function frameVersionMatchesCurrentState(
   frame: Frame,
   version: FrameVersion,
@@ -544,6 +555,7 @@ function buildFrameViews(manifest: ProjectManifest) {
       latestVersion,
       currentVersion,
       galleryVersions,
+      latestErrorJob: getLatestErroredJob(frame.id, jobs),
       hasCurrentApproval,
       queuedJobs: jobs.filter((job) => job.status !== "completed").length,
       nextAction: deriveFrameNextAction(frame, status),
@@ -776,6 +788,7 @@ export function buildProjectSnapshot(
         (orderedTransitionKeys.get(`${right.fromFrameId}:${right.toFrameId}`) ?? 0),
     )
     .map((transition) => {
+      const transitionJobs = manifest.jobs.filter((job) => job.targetParentId === transition.id);
       const fromFrame = frameViewMap.get(transition.fromFrameId)!;
       const toFrame = frameViewMap.get(transition.toFrameId)!;
       const blockedByFrameIds = [fromFrame, toFrame]
@@ -803,7 +816,7 @@ export function buildProjectSnapshot(
       const currentVideo = hasCurrentApproval ? approvedVideoVersion : latestMatchingVideo;
       const videoStatus = deriveTransitionVideoStatus({
         transition,
-        jobs: manifest.jobs.filter((job) => job.targetParentId === transition.id),
+        jobs: transitionJobs,
         blockedByFrameIds,
         currentVideo,
         hasCurrentApproval,
@@ -819,6 +832,7 @@ export function buildProjectSnapshot(
         latestVideoVersion,
         currentVideo,
         galleryVersions,
+        latestErrorJob: getLatestErroredJob(transition.id, transitionJobs),
         hasCurrentApproval,
         isStale: currentVideo == null || blockedByFrameIds.length > 0 || promptStatus !== "confirmed",
         nextAction: deriveTransitionNextAction({

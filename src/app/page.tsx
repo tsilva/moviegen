@@ -13,8 +13,8 @@ export default async function HomePage() {
       await connection();
       const openedSnapshot = await openProject(DEFAULT_PROJECT_PATH, true);
       initialSnapshot = await resumeProjectJobs(openedSnapshot.projectPath);
-    } catch (error) {
-      console.error("Failed to open default project path on launch", error);
+    } catch {
+      initialSnapshot = null;
     }
   }
 

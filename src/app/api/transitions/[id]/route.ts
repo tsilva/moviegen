@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { failure, ok } from "@/lib/http";
-import { normalizeGenerationOverrides } from "@/lib/generation-config";
+import { getProjectDefaultModelId, normalizeGenerationOverrides } from "@/lib/generation-config";
 import { mutateCurrentProject } from "@/lib/project-store";
 
 const requestSchema = z.object({
@@ -41,7 +41,11 @@ export async function PATCH(
       }
 
       if (body.generationOverrides !== undefined) {
-        transition.generationOverrides = normalizeGenerationOverrides("transition", body.generationOverrides ?? {});
+        transition.generationOverrides = normalizeGenerationOverrides(
+          "transition",
+          body.generationOverrides ?? {},
+          getProjectDefaultModelId(manifest.generationDefaults, "transition"),
+        );
       }
 
       transition.updatedAt = new Date().toISOString();

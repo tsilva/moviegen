@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { failure, ok } from "@/lib/http";
-import { normalizeGenerationOverrides } from "@/lib/generation-config";
+import { getProjectDefaultModelId, normalizeGenerationOverrides } from "@/lib/generation-config";
 import { mutateCurrentProject } from "@/lib/project-store";
 import { reconcileTransitions } from "@/lib/project-ops";
 
@@ -44,7 +44,11 @@ export async function PATCH(
       }
 
       if (body.generationOverrides !== undefined) {
-        frame.generationOverrides = normalizeGenerationOverrides("frame", body.generationOverrides ?? {});
+        frame.generationOverrides = normalizeGenerationOverrides(
+          "frame",
+          body.generationOverrides ?? {},
+          getProjectDefaultModelId(manifest.generationDefaults, "frame"),
+        );
       }
 
       frame.updatedAt = new Date().toISOString();

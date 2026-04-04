@@ -36,6 +36,7 @@ import {
   IconTrash,
 } from "@tabler/icons-react";
 import type {
+  GenerationOverrides,
   FrameVersion,
   FrameView,
   GenerationSettings,
@@ -47,7 +48,8 @@ import type {
   TransitionVersion,
   TransitionView,
 } from "@/lib/types";
-import { filterGenerationSettingsForModel } from "@/lib/generation-config";
+import { filterGenerationSettingsForModel, hasGenerationOverrides } from "@/lib/generation-config";
+import { createDefaultGenerationDefaults } from "@/lib/generation-defaults";
 import {
   DEFAULT_SYSTEM_PROMPT_TEMPLATE,
   type GenerationModelDefinition,
@@ -77,6 +79,10 @@ type AssetInfoTarget = {
   responsePayload: unknown;
 };
 
+type FailedAssetInfo = AssetInfoTarget & {
+  label: string;
+};
+
 type MoviePlaylistEntry = {
   clipId: string;
   transitionId: string;
@@ -96,11 +102,12 @@ type AssetGalleryProps<TVersion extends FrameVersion | TransitionVersion> = {
   versions: TVersion[];
   selectedTileId: string;
   pendingLabel?: string | null;
+  failedAsset?: FailedAssetInfo | null;
   kind: "frame" | "transition";
   getVersionLabel?: (version: TVersion) => string;
   onDropFiles?: (files: File[]) => void | Promise<void>;
   onSelectVersion: (versionId: string) => void;
-  onOpenInfo: (version: TVersion) => void;
+  onOpenInfo: (target: AssetInfoTarget) => void;
   onStopPending?: () => void | Promise<void>;
 };
 
@@ -139,7 +146,7 @@ function getDraftSettingsForModel(modelId: string, settings: GenerationSettings 
 }
 
 function cloneGenerationDefaults(generationDefaults: ProjectGenerationDefaults | null | undefined) {
-  return structuredClone(generationDefaults?.byModel ?? {});
+  return structuredClone(generationDefaults ?? createDefaultGenerationDefaults());
 }
 
 type GenerationConfigFieldsProps = {
@@ -221,6 +228,46 @@ function GenerationConfigFields({
       })}
     </Stack>
   );
+}
+
+function getGenerationModeLabel(hasOverrides: boolean) {
+  return hasOverrides ? "Override active" : "Using global defaults";
+}
+
+function formatGenerationSettingsSummary(modelId: string, settings: GenerationSettings) {
+  const definition = getModelDefinition(modelId);
+  if (!definition || definition.settings.length === 0) {
+    return "No model-specific settings";
+  }
+
+  return definition.settings
+    .map((setting) => {
+      const value = settings[setting.key] ?? setting.defaultValue;
+      if (setting.kind === "boolean") {
+        return `${setting.label}: ${value ? "On" : "Off"}`;
+      }
+
+      const option = setting.options?.find((item) => item.value === value);
+      return `${setting.label}: ${option?.label ?? String(value)}`;
+    })
+    .join(" · ");
+}
+
+function buildGenerationOverrides(
+  enabled: boolean,
+  modelId: string,
+  systemPromptTemplate: string,
+  settings: GenerationSettings,
+): GenerationOverrides {
+  if (!enabled) {
+    return {};
+  }
+
+  return {
+    modelId,
+    systemPromptTemplate,
+    settings: getDraftSettingsForModel(modelId, settings),
+  };
 }
 
 function assetUrl(relativePath: string | null | undefined) {
@@ -337,6 +384,7 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
   versions,
   selectedTileId,
   pendingLabel,
+  failedAsset,
   kind,
   getVersionLabel,
   onDropFiles,
@@ -502,6 +550,69 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
           </Box>
         ) : null}
 
+        {!pendingLabel && failedAsset ? (
+          <Box
+            style={{
+              display: "block",
+              width: ENTRY_PREVIEW_WIDTH,
+              flex: `0 0 ${ENTRY_PREVIEW_WIDTH}px`,
+              borderRadius: 16,
+              border: "1px solid rgba(255, 99, 99, 0.28)",
+              background: "rgba(140, 28, 28, 0.12)",
+              overflow: "hidden",
+            }}
+          >
+            <Stack gap="xs" p="xs">
+              <Box
+                style={{
+                  aspectRatio: "16 / 9",
+                  overflow: "hidden",
+                  borderRadius: 12,
+                  background: "rgba(255, 99, 99, 0.08)",
+                  border: "1px solid rgba(255, 99, 99, 0.2)",
+                  position: "relative",
+                }}
+              >
+                <ActionIcon
+                  variant="filled"
+                  color="dark"
+                  radius="xl"
+                  size="sm"
+                  aria-label={`Show failed ${kind === "frame" ? "asset" : "clip"} request and response`}
+                  onClick={() => onOpenInfo(failedAsset)}
+                  style={{
+                    position: "absolute",
+                    top: 8,
+                    right: 8,
+                    zIndex: 2,
+                    background: "rgba(8, 12, 18, 0.78)",
+                  }}
+                >
+                  <IconInfoCircle size={14} aria-hidden="true" />
+                </ActionIcon>
+                <Flex
+                  direction="column"
+                  align="center"
+                  justify="center"
+                  gap="xs"
+                  style={{ height: "100%", padding: 16 }}
+                >
+                  <Badge color="red">Error</Badge>
+                  <Text fw={600} size="sm" ta="center">
+                    Last attempt failed
+                  </Text>
+                  <Text c="dimmed" size="xs" ta="center">
+                    Open details to inspect the request and error response.
+                  </Text>
+                </Flex>
+              </Box>
+              <Text c="dimmed" size="xs" truncate>
+                {failedAsset.label}
+              </Text>
+            </Stack>
+          </Box>
+        ) : null}
+
         {versions.map((version) => {
           const isSelected = selectedTileId === version.id;
 
@@ -547,7 +658,11 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
                     aria-label={`Show generation request and response for ${getVersionLabel?.(version) ?? version.model}`}
                     onClick={(event) => {
                       event.stopPropagation();
-                      onOpenInfo(version);
+                      onOpenInfo({
+                        title: `${kind === "frame" ? "Frame Asset" : "Transition Clip"} Info`,
+                        requestPayload: version.inputPayload,
+                        responsePayload: version.responsePayload,
+                      });
                     }}
                     style={{
                       position: "absolute",
@@ -866,6 +981,74 @@ function AssetInfoModal({ target, onClose }: { target: AssetInfoTarget | null; o
   );
 }
 
+type GenerationOverrideModalProps = {
+  opened: boolean;
+  title: string;
+  assetKind: "frame" | "transition";
+  overrideEnabled: boolean;
+  modelId: string;
+  systemPromptTemplate: string;
+  settings: GenerationSettings;
+  onClose: () => void;
+  onSave: () => void | Promise<void>;
+  onOverrideEnabledChange: (value: boolean) => void;
+  onModelIdChange: (modelId: string) => void;
+  onSystemPromptTemplateChange: (value: string) => void;
+  onSettingChange: (key: string, value: string | boolean) => void;
+};
+
+function GenerationOverrideModal({
+  opened,
+  title,
+  assetKind,
+  overrideEnabled,
+  modelId,
+  systemPromptTemplate,
+  settings,
+  onClose,
+  onSave,
+  onOverrideEnabledChange,
+  onModelIdChange,
+  onSystemPromptTemplateChange,
+  onSettingChange,
+}: GenerationOverrideModalProps) {
+  return (
+    <Modal opened={opened} onClose={onClose} title={title} size="lg">
+      <Stack gap="md">
+        <Switch
+          label="Override global settings for this item"
+          checked={overrideEnabled}
+          onChange={(event) => onOverrideEnabledChange(event.currentTarget.checked)}
+        />
+        <Text c="dimmed" size="sm">
+          {overrideEnabled
+            ? "This item will use its own model, system prompt, and model-specific settings."
+            : "This item will inherit the current global defaults."}
+        </Text>
+        <Box style={{ opacity: overrideEnabled ? 1 : 0.6, pointerEvents: overrideEnabled ? "auto" : "none" }}>
+          <GenerationConfigFields
+            assetKind={assetKind}
+            modelId={modelId}
+            systemPromptTemplate={systemPromptTemplate}
+            settings={settings}
+            onModelIdChange={onModelIdChange}
+            onSystemPromptTemplateChange={onSystemPromptTemplateChange}
+            onSettingChange={onSettingChange}
+          />
+        </Box>
+        <Group justify="space-between">
+          <Button variant="default" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={() => void onSave()}>
+            Save Settings
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
+}
+
 function AddTrackSeparator({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <UnstyledButton
@@ -1124,18 +1307,27 @@ export function MovieCreatorApp({
   const [moviePlaying, setMoviePlaying] = useState(false);
   const [framePromptDraft, setFramePromptDraft] = useState("");
   const [frameUsePreviousDraft, setFrameUsePreviousDraft] = useState(false);
-  const [frameModelIdDraft, setFrameModelIdDraft] = useState("");
-  const [frameSystemPromptTemplateDraft, setFrameSystemPromptTemplateDraft] = useState(DEFAULT_SYSTEM_PROMPT_TEMPLATE);
-  const [frameGenerationSettingsDraft, setFrameGenerationSettingsDraft] = useState<GenerationSettings>({});
   const [frameConfigDirty, setFrameConfigDirty] = useState(false);
+  const [frameSettingsModalOpen, setFrameSettingsModalOpen] = useState(false);
+  const [frameOverrideEnabledDraft, setFrameOverrideEnabledDraft] = useState(false);
+  const [frameOverrideModelIdDraft, setFrameOverrideModelIdDraft] = useState("");
+  const [frameOverrideSystemPromptTemplateDraft, setFrameOverrideSystemPromptTemplateDraft] = useState(
+    DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+  );
+  const [frameOverrideGenerationSettingsDraft, setFrameOverrideGenerationSettingsDraft] = useState<GenerationSettings>({});
   const [transitionPromptDraft, setTransitionPromptDraft] = useState("");
-  const [transitionModelIdDraft, setTransitionModelIdDraft] = useState("");
-  const [transitionSystemPromptTemplateDraft, setTransitionSystemPromptTemplateDraft] = useState(DEFAULT_SYSTEM_PROMPT_TEMPLATE);
-  const [transitionGenerationSettingsDraft, setTransitionGenerationSettingsDraft] = useState<GenerationSettings>({});
   const [transitionConfigDirty, setTransitionConfigDirty] = useState(false);
+  const [transitionSettingsModalOpen, setTransitionSettingsModalOpen] = useState(false);
+  const [transitionOverrideEnabledDraft, setTransitionOverrideEnabledDraft] = useState(false);
+  const [transitionOverrideModelIdDraft, setTransitionOverrideModelIdDraft] = useState("");
+  const [transitionOverrideSystemPromptTemplateDraft, setTransitionOverrideSystemPromptTemplateDraft] = useState(
+    DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+  );
+  const [transitionOverrideGenerationSettingsDraft, setTransitionOverrideGenerationSettingsDraft] = useState<GenerationSettings>({});
   const [syncTick, setSyncTick] = useState(0);
   const previousPendingByEntryRef = useRef<Record<string, boolean>>({});
   const previousDefaultTileByEntryRef = useRef<Record<string, string>>({});
+  const attemptedAutoLoadPathRef = useRef<string | null>(null);
   const frameAutosaveRequestIdRef = useRef(0);
   const transitionAutosaveRequestIdRef = useRef(0);
   const syncedEditorEntryKeyRef = useRef<string | null>(null);
@@ -1164,6 +1356,14 @@ export function MovieCreatorApp({
     selectedTrack && selectedSlotView?.entryKind === "transition" ? selectedTrack.transition : null;
   const selectedFrameTileId = selectedFrame ? getSelectedGalleryTileId(selectedFrame) : GALLERY_ADD_TILE_ID;
   const selectedTransitionTileId = selectedTransition ? getSelectedGalleryTileId(selectedTransition) : GALLERY_ADD_TILE_ID;
+  const selectedFrameGenerationDraft = selectedFrame
+    ? getFrameGenerationDraft(selectedFrame, selectedFrameTileId, projectGenerationDefaults)
+    : null;
+  const selectedTransitionGenerationDraft = selectedTransition
+    ? getTransitionGenerationDraft(selectedTransition, selectedTransitionTileId, projectGenerationDefaults)
+    : null;
+  const selectedFrameHasOverrides = selectedFrame ? hasGenerationOverrides(selectedFrame.generationOverrides) : false;
+  const selectedTransitionHasOverrides = selectedTransition ? hasGenerationOverrides(selectedTransition.generationOverrides) : false;
 
   function galleryKey(kind: "frame" | "transition", id: string) {
     return `${kind}:${id}`;
@@ -1187,12 +1387,29 @@ export function MovieCreatorApp({
     }));
   }
 
-  function openAssetInfo(kind: "frame" | "transition", version: FrameVersion | TransitionVersion) {
-    setAssetInfoTarget({
-      title: `${kind === "frame" ? "Frame Asset" : "Transition Clip"} Info`,
-      requestPayload: version.inputPayload,
-      responsePayload: version.responsePayload,
-    });
+  function openAssetInfo(target: AssetInfoTarget) {
+    setAssetInfoTarget(target);
+  }
+
+  function getFailedAssetInfo(
+    kind: "frame" | "transition",
+    job: FrameView["latestErrorJob"] | TransitionView["latestErrorJob"],
+  ): FailedAssetInfo | null {
+    if (!job) {
+      return null;
+    }
+
+    return {
+      title: `${kind === "frame" ? "Failed Frame Asset" : "Failed Transition Clip"} Info`,
+      label: job.errorMessage?.trim() || "Generation failed",
+      requestPayload: job.requestPayload,
+      responsePayload: {
+        errorMessage: job.errorMessage,
+        status: job.status,
+        provider: job.provider,
+        providerPredictionId: job.providerPredictionId,
+      },
+    };
   }
 
   function applySnapshotUpdate(result: ProjectSnapshot) {
@@ -1284,7 +1501,12 @@ export function MovieCreatorApp({
   });
 
   useEffect(() => {
-    if (!snapshot && normalizedProjectPath) {
+    if (
+      !snapshot &&
+      normalizedProjectPath &&
+      attemptedAutoLoadPathRef.current !== normalizedProjectPath
+    ) {
+      attemptedAutoLoadPathRef.current = normalizedProjectPath;
       loadProjectEffect(normalizedProjectPath);
     }
   }, [normalizedProjectPath, snapshot]);
@@ -1310,6 +1532,7 @@ export function MovieCreatorApp({
           entryId: string;
           prompt: string;
           usePreviousFrameAsReference: boolean;
+          overrideEnabled: boolean;
           modelId: string;
           systemPromptTemplate: string;
           settings: GenerationSettings;
@@ -1318,6 +1541,7 @@ export function MovieCreatorApp({
           kind: "transition";
           entryId: string;
           prompt: string;
+          overrideEnabled: boolean;
           modelId: string;
           systemPromptTemplate: string;
           settings: GenerationSettings;
@@ -1327,14 +1551,18 @@ export function MovieCreatorApp({
         syncedEditorEntryKeyRef.current = null;
         setFramePromptDraft("");
         setFrameUsePreviousDraft(false);
-        setFrameModelIdDraft("");
-        setFrameSystemPromptTemplateDraft(DEFAULT_SYSTEM_PROMPT_TEMPLATE);
-        setFrameGenerationSettingsDraft({});
+        setFrameSettingsModalOpen(false);
+        setFrameOverrideEnabledDraft(false);
+        setFrameOverrideModelIdDraft("");
+        setFrameOverrideSystemPromptTemplateDraft(DEFAULT_SYSTEM_PROMPT_TEMPLATE);
+        setFrameOverrideGenerationSettingsDraft({});
         setFrameConfigDirty(false);
         setTransitionPromptDraft("");
-        setTransitionModelIdDraft("");
-        setTransitionSystemPromptTemplateDraft(DEFAULT_SYSTEM_PROMPT_TEMPLATE);
-        setTransitionGenerationSettingsDraft({});
+        setTransitionSettingsModalOpen(false);
+        setTransitionOverrideEnabledDraft(false);
+        setTransitionOverrideModelIdDraft("");
+        setTransitionOverrideSystemPromptTemplateDraft(DEFAULT_SYSTEM_PROMPT_TEMPLATE);
+        setTransitionOverrideGenerationSettingsDraft({});
         setTransitionConfigDirty(false);
         return;
       }
@@ -1362,18 +1590,22 @@ export function MovieCreatorApp({
       if (nextState.kind === "frame") {
         setFramePromptDraft(nextState.prompt);
         setFrameUsePreviousDraft(nextState.usePreviousFrameAsReference);
-        setFrameModelIdDraft(nextState.modelId);
-        setFrameSystemPromptTemplateDraft(nextState.systemPromptTemplate);
-        setFrameGenerationSettingsDraft(getDraftSettingsForModel(nextState.modelId, nextState.settings));
+        setFrameSettingsModalOpen(false);
+        setFrameOverrideEnabledDraft(nextState.overrideEnabled);
+        setFrameOverrideModelIdDraft(nextState.modelId);
+        setFrameOverrideSystemPromptTemplateDraft(nextState.systemPromptTemplate);
+        setFrameOverrideGenerationSettingsDraft(getDraftSettingsForModel(nextState.modelId, nextState.settings));
         setFrameConfigDirty(false);
         setTransitionConfigDirty(false);
         return;
       }
 
       setTransitionPromptDraft(nextState.prompt);
-      setTransitionModelIdDraft(nextState.modelId);
-      setTransitionSystemPromptTemplateDraft(nextState.systemPromptTemplate);
-      setTransitionGenerationSettingsDraft(getDraftSettingsForModel(nextState.modelId, nextState.settings));
+      setTransitionSettingsModalOpen(false);
+      setTransitionOverrideEnabledDraft(nextState.overrideEnabled);
+      setTransitionOverrideModelIdDraft(nextState.modelId);
+      setTransitionOverrideSystemPromptTemplateDraft(nextState.systemPromptTemplate);
+      setTransitionOverrideGenerationSettingsDraft(getDraftSettingsForModel(nextState.modelId, nextState.settings));
       setFrameConfigDirty(false);
       setTransitionConfigDirty(false);
     },
@@ -1387,6 +1619,7 @@ export function MovieCreatorApp({
         entryId: selectedFrame.id,
         prompt: draft.prompt,
         usePreviousFrameAsReference: draft.usePreviousFrameAsReference,
+        overrideEnabled: hasGenerationOverrides(selectedFrame.generationOverrides),
         modelId: draft.modelId,
         systemPromptTemplate: draft.systemPromptTemplate,
         settings: draft.settings,
@@ -1400,6 +1633,7 @@ export function MovieCreatorApp({
         kind: "transition",
         entryId: selectedTransition.id,
         prompt: draft.prompt,
+        overrideEnabled: hasGenerationOverrides(selectedTransition.generationOverrides),
         modelId: draft.modelId,
         systemPromptTemplate: draft.systemPromptTemplate,
         settings: draft.settings,
@@ -1628,24 +1862,44 @@ export function MovieCreatorApp({
     },
   ) {
     setProjectGenerationDefaultsDraft((current) => {
-      const nextCurrent = current[modelId] ?? {
+      const nextCurrent = current.byModel[modelId] ?? {
         systemPromptTemplate: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
         settings: getDraftSettingsForModel(modelId, {}),
       };
 
       return {
         ...current,
-        [modelId]: update({
-          systemPromptTemplate: nextCurrent.systemPromptTemplate,
-          settings: getDraftSettingsForModel(modelId, nextCurrent.settings),
-        }),
+        byModel: {
+          ...current.byModel,
+          [modelId]: update({
+            systemPromptTemplate: nextCurrent.systemPromptTemplate,
+            settings: getDraftSettingsForModel(modelId, nextCurrent.settings),
+          }),
+        },
       };
     });
   }
 
+  function updateProjectSelectedModelDraft(assetKind: "frame" | "transition", modelId: string) {
+    setProjectGenerationDefaultsDraft((current) => ({
+      ...current,
+      selectedModels: {
+        ...current.selectedModels,
+        [assetKind]: modelId,
+      },
+      byModel: {
+        ...current.byModel,
+        [modelId]: current.byModel[modelId] ?? {
+          systemPromptTemplate: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+          settings: getDraftSettingsForModel(modelId, {}),
+        },
+      },
+    }));
+  }
+
   async function saveProjectSettings() {
     const generationDefaults = Object.fromEntries(
-      Object.entries(projectGenerationDefaultsDraft).map(([modelId, config]) => [
+      Object.entries(projectGenerationDefaultsDraft.byModel).map(([modelId, config]) => [
         modelId,
         {
           systemPromptTemplate: config.systemPromptTemplate,
@@ -1661,6 +1915,7 @@ export function MovieCreatorApp({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           generationDefaults: {
+            selectedModels: projectGenerationDefaultsDraft.selectedModels,
             byModel: generationDefaults,
           },
         }),
@@ -1673,35 +1928,21 @@ export function MovieCreatorApp({
     }
   }
 
-  function handleFrameModelDraftChange(modelId: string) {
-    setFrameModelIdDraft(modelId);
-    setFrameGenerationSettingsDraft((current) => getDraftSettingsForModel(modelId, current));
-    setFrameConfigDirty(true);
+  function handleFrameOverrideModelDraftChange(modelId: string) {
+    setFrameOverrideModelIdDraft(modelId);
+    setFrameOverrideGenerationSettingsDraft((current) => getDraftSettingsForModel(modelId, current));
   }
 
-  function handleTransitionModelDraftChange(modelId: string) {
-    setTransitionModelIdDraft(modelId);
-    setTransitionGenerationSettingsDraft((current) => getDraftSettingsForModel(modelId, current));
-    setTransitionConfigDirty(true);
-  }
-
-  function buildGenerationOverridesPayload(
-    modelId: string,
-    systemPromptTemplate: string,
-    settings: GenerationSettings,
-  ) {
-    return {
-      modelId,
-      systemPromptTemplate,
-      settings: getDraftSettingsForModel(modelId, settings),
-    };
+  function handleTransitionOverrideModelDraftChange(modelId: string) {
+    setTransitionOverrideModelIdDraft(modelId);
+    setTransitionOverrideGenerationSettingsDraft((current) => getDraftSettingsForModel(modelId, current));
   }
 
   async function saveFrameConfig(
     frameId: string,
     prompt: string,
     usePreviousFrameAsReference: boolean,
-    generationOverrides: ReturnType<typeof buildGenerationOverridesPayload>,
+    generationOverrides?: GenerationOverrides,
     successMessage?: string,
   ) {
     return mutate(
@@ -1712,7 +1953,7 @@ export function MovieCreatorApp({
         body: JSON.stringify({
           imagePrompt: prompt,
           usePreviousFrameAsReference,
-          generationOverrides,
+          ...(generationOverrides !== undefined ? { generationOverrides } : {}),
         }),
       },
       successMessage,
@@ -1723,7 +1964,7 @@ export function MovieCreatorApp({
     frame: FrameView,
     prompt: string,
     usePreviousFrameAsReference: boolean,
-    generationOverrides: ReturnType<typeof buildGenerationOverridesPayload>,
+    generationOverrides?: GenerationOverrides,
     successMessage = "Queued frame generation",
     directAssetPaths?: string[],
   ) {
@@ -1739,7 +1980,7 @@ export function MovieCreatorApp({
           directAssetPaths,
           prompt,
           usePreviousFrameAsReference,
-          generationOverrides,
+          ...(generationOverrides !== undefined ? { generationOverrides } : {}),
         }),
       },
       successMessage,
@@ -1749,7 +1990,7 @@ export function MovieCreatorApp({
   async function saveTransitionConfig(
     transitionId: string,
     prompt: string,
-    generationOverrides: ReturnType<typeof buildGenerationOverridesPayload>,
+    generationOverrides?: GenerationOverrides,
     successMessage?: string,
   ) {
     return mutate(
@@ -1759,7 +2000,7 @@ export function MovieCreatorApp({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           transitionPrompt: prompt,
-          generationOverrides,
+          ...(generationOverrides !== undefined ? { generationOverrides } : {}),
         }),
       },
       successMessage,
@@ -1777,11 +2018,6 @@ export function MovieCreatorApp({
       frame.id,
       framePromptDraft,
       frame.position === 0 ? false : frameUsePreviousDraft,
-      buildGenerationOverridesPayload(
-        frameModelIdDraft,
-        frameSystemPromptTemplateDraft,
-        frameGenerationSettingsDraft,
-      ),
     );
     if (!saved) {
       return;
@@ -1791,11 +2027,6 @@ export function MovieCreatorApp({
       frame,
       prompt,
       frame.position === 0 ? false : frameUsePreviousDraft,
-      buildGenerationOverridesPayload(
-        frameModelIdDraft,
-        frameSystemPromptTemplateDraft,
-        frameGenerationSettingsDraft,
-      ),
     );
   }
 
@@ -1820,11 +2051,6 @@ export function MovieCreatorApp({
     const frameId = selectedFrame.id;
     const prompt = framePromptDraft;
     const usePreviousFrameAsReference = selectedFrame.position === 0 ? false : frameUsePreviousDraft;
-    const generationOverrides = buildGenerationOverridesPayload(
-      frameModelIdDraft,
-      frameSystemPromptTemplateDraft,
-      frameGenerationSettingsDraft,
-    );
     const requestId = frameAutosaveRequestIdRef.current + 1;
     frameAutosaveRequestIdRef.current = requestId;
 
@@ -1835,7 +2061,6 @@ export function MovieCreatorApp({
         body: JSON.stringify({
           imagePrompt: prompt,
           usePreviousFrameAsReference,
-          generationOverrides,
         }),
       })
         .then((result) => {
@@ -1862,9 +2087,6 @@ export function MovieCreatorApp({
     frameConfigDirty,
     framePromptDraft,
     frameUsePreviousDraft,
-    frameModelIdDraft,
-    frameSystemPromptTemplateDraft,
-    frameGenerationSettingsDraft,
     selectedFrame,
   ]);
 
@@ -1908,11 +2130,7 @@ export function MovieCreatorApp({
           frame,
           "",
           false,
-          buildGenerationOverridesPayload(
-            frameModelIdDraft,
-            frameSystemPromptTemplateDraft,
-            frameGenerationSettingsDraft,
-          ),
+          undefined,
           `Imported ${upload.paths.length} frame asset${upload.paths.length === 1 ? "" : "s"}`,
           upload.paths,
         );
@@ -1940,11 +2158,7 @@ export function MovieCreatorApp({
         frame,
         prompt,
         false,
-        buildGenerationOverridesPayload(
-          frameModelIdDraft,
-          frameSystemPromptTemplateDraft,
-          frameGenerationSettingsDraft,
-        ),
+        undefined,
         `Queued frame generation from ${upload.paths.length} reference image${upload.paths.length === 1 ? "" : "s"}`,
       );
     } catch (error) {
@@ -1967,15 +2181,65 @@ export function MovieCreatorApp({
     await handleFrameReferenceDrop(selectedFrame, files);
   }
 
+  function openSelectedFrameSettings() {
+    if (!selectedFrameGenerationDraft) {
+      return;
+    }
+
+    setFrameOverrideEnabledDraft(selectedFrameHasOverrides);
+    setFrameOverrideModelIdDraft(selectedFrameGenerationDraft.modelId);
+    setFrameOverrideSystemPromptTemplateDraft(selectedFrameGenerationDraft.systemPromptTemplate);
+    setFrameOverrideGenerationSettingsDraft(
+      getDraftSettingsForModel(selectedFrameGenerationDraft.modelId, selectedFrameGenerationDraft.settings),
+    );
+    setFrameSettingsModalOpen(true);
+  }
+
+  function closeSelectedFrameSettings() {
+    setFrameSettingsModalOpen(false);
+    if (!selectedFrameGenerationDraft) {
+      return;
+    }
+
+    setFrameOverrideEnabledDraft(selectedFrameHasOverrides);
+    setFrameOverrideModelIdDraft(selectedFrameGenerationDraft.modelId);
+    setFrameOverrideSystemPromptTemplateDraft(selectedFrameGenerationDraft.systemPromptTemplate);
+    setFrameOverrideGenerationSettingsDraft(
+      getDraftSettingsForModel(selectedFrameGenerationDraft.modelId, selectedFrameGenerationDraft.settings),
+    );
+  }
+
+  async function saveSelectedFrameSettings() {
+    if (!selectedFrame) {
+      return;
+    }
+
+    const result = await mutate(
+      `/api/frames/${selectedFrame.id}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          generationOverrides: buildGenerationOverrides(
+            frameOverrideEnabledDraft,
+            frameOverrideModelIdDraft,
+            frameOverrideSystemPromptTemplateDraft,
+            frameOverrideGenerationSettingsDraft,
+          ),
+        }),
+      },
+      "Frame settings updated",
+    );
+
+    if (result) {
+      setFrameSettingsModalOpen(false);
+    }
+  }
+
   async function generateSelectedTransition(transition: TransitionView) {
     const saved = await saveTransitionConfig(
       transition.id,
       transitionPromptDraft,
-      buildGenerationOverridesPayload(
-        transitionModelIdDraft,
-        transitionSystemPromptTemplateDraft,
-        transitionGenerationSettingsDraft,
-      ),
     );
     if (!saved) {
       return;
@@ -1991,13 +2255,6 @@ export function MovieCreatorApp({
           transitionIds: [transition.id],
           promptsByTransitionId: {
             [transition.id]: transitionPromptDraft.trim() || transition.transitionPrompt,
-          },
-          generationOverridesByTransitionId: {
-            [transition.id]: buildGenerationOverridesPayload(
-              transitionModelIdDraft,
-              transitionSystemPromptTemplateDraft,
-              transitionGenerationSettingsDraft,
-            ),
           },
         }),
       },
@@ -2018,6 +2275,61 @@ export function MovieCreatorApp({
     }
   }
 
+  function openSelectedTransitionSettings() {
+    if (!selectedTransitionGenerationDraft) {
+      return;
+    }
+
+    setTransitionOverrideEnabledDraft(selectedTransitionHasOverrides);
+    setTransitionOverrideModelIdDraft(selectedTransitionGenerationDraft.modelId);
+    setTransitionOverrideSystemPromptTemplateDraft(selectedTransitionGenerationDraft.systemPromptTemplate);
+    setTransitionOverrideGenerationSettingsDraft(
+      getDraftSettingsForModel(selectedTransitionGenerationDraft.modelId, selectedTransitionGenerationDraft.settings),
+    );
+    setTransitionSettingsModalOpen(true);
+  }
+
+  function closeSelectedTransitionSettings() {
+    setTransitionSettingsModalOpen(false);
+    if (!selectedTransitionGenerationDraft) {
+      return;
+    }
+
+    setTransitionOverrideEnabledDraft(selectedTransitionHasOverrides);
+    setTransitionOverrideModelIdDraft(selectedTransitionGenerationDraft.modelId);
+    setTransitionOverrideSystemPromptTemplateDraft(selectedTransitionGenerationDraft.systemPromptTemplate);
+    setTransitionOverrideGenerationSettingsDraft(
+      getDraftSettingsForModel(selectedTransitionGenerationDraft.modelId, selectedTransitionGenerationDraft.settings),
+    );
+  }
+
+  async function saveSelectedTransitionSettings() {
+    if (!selectedTransition) {
+      return;
+    }
+
+    const result = await mutate(
+      `/api/transitions/${selectedTransition.id}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          generationOverrides: buildGenerationOverrides(
+            transitionOverrideEnabledDraft,
+            transitionOverrideModelIdDraft,
+            transitionOverrideSystemPromptTemplateDraft,
+            transitionOverrideGenerationSettingsDraft,
+          ),
+        }),
+      },
+      "Transition settings updated",
+    );
+
+    if (result) {
+      setTransitionSettingsModalOpen(false);
+    }
+  }
+
   useEffect(() => {
     if (!selectedTransition || !transitionConfigDirty) {
       return;
@@ -2025,11 +2337,6 @@ export function MovieCreatorApp({
 
     const transitionId = selectedTransition.id;
     const prompt = transitionPromptDraft;
-    const generationOverrides = buildGenerationOverridesPayload(
-      transitionModelIdDraft,
-      transitionSystemPromptTemplateDraft,
-      transitionGenerationSettingsDraft,
-    );
     const requestId = transitionAutosaveRequestIdRef.current + 1;
     transitionAutosaveRequestIdRef.current = requestId;
 
@@ -2039,7 +2346,6 @@ export function MovieCreatorApp({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           transitionPrompt: prompt,
-          generationOverrides,
         }),
       })
         .then((result) => {
@@ -2066,9 +2372,6 @@ export function MovieCreatorApp({
     selectedTransition,
     transitionConfigDirty,
     transitionPromptDraft,
-    transitionModelIdDraft,
-    transitionSystemPromptTemplateDraft,
-    transitionGenerationSettingsDraft,
   ]);
 
   async function selectFrameVersion(frame: FrameView, versionId: string) {
@@ -2257,7 +2560,7 @@ export function MovieCreatorApp({
                           leftSection={<IconSettings size={14} aria-hidden="true" />}
                           onClick={() => setProjectSettingsModalOpen(true)}
                         >
-                          Project Settings…
+                          Global Settings…
                         </Menu.Item>
                         <Menu.Divider />
                         <Menu.Item
@@ -2388,24 +2691,46 @@ export function MovieCreatorApp({
                               maxRows={4}
                               autoComplete="off"
                             />
-                            <GenerationConfigFields
-                              assetKind="frame"
-                              modelId={frameModelIdDraft}
-                              systemPromptTemplate={frameSystemPromptTemplateDraft}
-                              settings={frameGenerationSettingsDraft}
-                              onModelIdChange={handleFrameModelDraftChange}
-                              onSystemPromptTemplateChange={(value) => {
-                                setFrameSystemPromptTemplateDraft(value);
-                                setFrameConfigDirty(true);
-                              }}
-                              onSettingChange={(key, value) => {
-                                setFrameGenerationSettingsDraft((current) => ({
-                                  ...current,
-                                  [key]: value,
-                                }));
-                                setFrameConfigDirty(true);
-                              }}
-                            />
+                            {selectedFrameGenerationDraft ? (
+                              <Box
+                                p="sm"
+                                style={{
+                                  borderRadius: 14,
+                                  border: "1px solid rgba(255,255,255,0.08)",
+                                  background: "rgba(255,255,255,0.03)",
+                                }}
+                              >
+                                <Stack gap={6}>
+                                  <Group justify="space-between" align="flex-start" wrap="nowrap">
+                                    <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
+                                      <Text fw={600} size="sm">
+                                        Generation Settings
+                                      </Text>
+                                      <Text c="dimmed" size="xs">
+                                        {getGenerationModeLabel(selectedFrameHasOverrides)}
+                                      </Text>
+                                    </Stack>
+                                    <Button
+                                      size="xs"
+                                      variant="light"
+                                      leftSection={<IconSettings size={14} aria-hidden="true" />}
+                                      onClick={openSelectedFrameSettings}
+                                    >
+                                      Settings
+                                    </Button>
+                                  </Group>
+                                  <Text fw={600} size="sm">
+                                    {getModelDefinition(selectedFrameGenerationDraft.modelId)?.label ?? selectedFrameGenerationDraft.modelId}
+                                  </Text>
+                                  <Text c="dimmed" size="xs">
+                                    {formatGenerationSettingsSummary(
+                                      selectedFrameGenerationDraft.modelId,
+                                      selectedFrameGenerationDraft.settings,
+                                    )}
+                                  </Text>
+                                </Stack>
+                              </Box>
+                            ) : null}
                             <Switch
                               label="Use previous frame as reference"
                               checked={selectedFrame.position === 0 ? false : frameUsePreviousDraft}
@@ -2458,11 +2783,12 @@ export function MovieCreatorApp({
                                     ? "Generating"
                                     : null
                               }
+                              failedAsset={getFailedAssetInfo("frame", selectedFrame.latestErrorJob)}
                               kind="frame"
                               getVersionLabel={(version) => version.sourcePrompt?.trim() || "No frame prompt yet"}
                               onDropFiles={(files) => void handleFrameReferenceDrop(selectedFrame, files)}
                               onSelectVersion={(versionId) => void selectFrameVersion(selectedFrame, versionId)}
-                              onOpenInfo={(version) => openAssetInfo("frame", version)}
+                              onOpenInfo={openAssetInfo}
                               onStopPending={() => void stopSelectedFrameGeneration(selectedFrame)}
                             />
                           </Stack>
@@ -2506,24 +2832,46 @@ export function MovieCreatorApp({
                               maxRows={4}
                               autoComplete="off"
                             />
-                            <GenerationConfigFields
-                              assetKind="transition"
-                              modelId={transitionModelIdDraft}
-                              systemPromptTemplate={transitionSystemPromptTemplateDraft}
-                              settings={transitionGenerationSettingsDraft}
-                              onModelIdChange={handleTransitionModelDraftChange}
-                              onSystemPromptTemplateChange={(value) => {
-                                setTransitionSystemPromptTemplateDraft(value);
-                                setTransitionConfigDirty(true);
-                              }}
-                              onSettingChange={(key, value) => {
-                                setTransitionGenerationSettingsDraft((current) => ({
-                                  ...current,
-                                  [key]: value,
-                                }));
-                                setTransitionConfigDirty(true);
-                              }}
-                            />
+                            {selectedTransitionGenerationDraft ? (
+                              <Box
+                                p="sm"
+                                style={{
+                                  borderRadius: 14,
+                                  border: "1px solid rgba(255,255,255,0.08)",
+                                  background: "rgba(255,255,255,0.03)",
+                                }}
+                              >
+                                <Stack gap={6}>
+                                  <Group justify="space-between" align="flex-start" wrap="nowrap">
+                                    <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
+                                      <Text fw={600} size="sm">
+                                        Generation Settings
+                                      </Text>
+                                      <Text c="dimmed" size="xs">
+                                        {getGenerationModeLabel(selectedTransitionHasOverrides)}
+                                      </Text>
+                                    </Stack>
+                                    <Button
+                                      size="xs"
+                                      variant="light"
+                                      leftSection={<IconSettings size={14} aria-hidden="true" />}
+                                      onClick={openSelectedTransitionSettings}
+                                    >
+                                      Settings
+                                    </Button>
+                                  </Group>
+                                  <Text fw={600} size="sm">
+                                    {getModelDefinition(selectedTransitionGenerationDraft.modelId)?.label ?? selectedTransitionGenerationDraft.modelId}
+                                  </Text>
+                                  <Text c="dimmed" size="xs">
+                                    {formatGenerationSettingsSummary(
+                                      selectedTransitionGenerationDraft.modelId,
+                                      selectedTransitionGenerationDraft.settings,
+                                    )}
+                                  </Text>
+                                </Stack>
+                              </Box>
+                            ) : null}
 
                             <Group gap="xs">
                               <Button
@@ -2551,10 +2899,11 @@ export function MovieCreatorApp({
                                     : "Generating"
                                   : null
                               }
+                              failedAsset={getFailedAssetInfo("transition", selectedTransition.latestErrorJob)}
                               kind="transition"
                               getVersionLabel={(version) => version.sourcePrompt?.trim() || "No transition prompt yet"}
                               onSelectVersion={(versionId) => void selectTransitionVersion(selectedTransition, versionId)}
-                              onOpenInfo={(version) => openAssetInfo("transition", version)}
+                              onOpenInfo={openAssetInfo}
                               onStopPending={() => void stopSelectedTransitionGeneration(selectedTransition)}
                             />
                           </Stack>
@@ -2590,42 +2939,90 @@ export function MovieCreatorApp({
 
       <AssetInfoModal target={assetInfoTarget} onClose={() => setAssetInfoTarget(null)} />
 
+      <GenerationOverrideModal
+        opened={frameSettingsModalOpen}
+        onClose={closeSelectedFrameSettings}
+        title={selectedFrame ? `Frame ${selectedFrame.position + 1} Settings` : "Frame Settings"}
+        assetKind="frame"
+        overrideEnabled={frameOverrideEnabledDraft}
+        modelId={frameOverrideModelIdDraft}
+        systemPromptTemplate={frameOverrideSystemPromptTemplateDraft}
+        settings={frameOverrideGenerationSettingsDraft}
+        onSave={saveSelectedFrameSettings}
+        onOverrideEnabledChange={setFrameOverrideEnabledDraft}
+        onModelIdChange={handleFrameOverrideModelDraftChange}
+        onSystemPromptTemplateChange={setFrameOverrideSystemPromptTemplateDraft}
+        onSettingChange={(key, value) => {
+          setFrameOverrideGenerationSettingsDraft((current) => ({
+            ...current,
+            [key]: value,
+          }));
+        }}
+      />
+
+      <GenerationOverrideModal
+        opened={transitionSettingsModalOpen}
+        onClose={closeSelectedTransitionSettings}
+        title={selectedTransition ? selectedSlotView?.label ?? "Transition Settings" : "Transition Settings"}
+        assetKind="transition"
+        overrideEnabled={transitionOverrideEnabledDraft}
+        modelId={transitionOverrideModelIdDraft}
+        systemPromptTemplate={transitionOverrideSystemPromptTemplateDraft}
+        settings={transitionOverrideGenerationSettingsDraft}
+        onSave={saveSelectedTransitionSettings}
+        onOverrideEnabledChange={setTransitionOverrideEnabledDraft}
+        onModelIdChange={handleTransitionOverrideModelDraftChange}
+        onSystemPromptTemplateChange={setTransitionOverrideSystemPromptTemplateDraft}
+        onSettingChange={(key, value) => {
+          setTransitionOverrideGenerationSettingsDraft((current) => ({
+            ...current,
+            [key]: value,
+          }));
+        }}
+      />
+
       <Modal
         opened={projectSettingsModalOpen}
         onClose={() => setProjectSettingsModalOpen(false)}
-        title="Project Settings"
+        title="Global Settings"
         size="lg"
       >
         <Stack gap="md">
+          <Text c="dimmed" size="sm">
+            These defaults apply to new tracks and any frame or transition that does not save its own override.
+          </Text>
           {(["frame", "transition"] as const).map((assetKind) => {
-            const model = getModelsForAssetKind(assetKind)[0] ?? null;
-            if (!model) {
+            const selectedModelId = projectGenerationDefaultsDraft.selectedModels[assetKind];
+            const selectedModel = getModelDefinition(selectedModelId);
+            if (!selectedModel) {
               return null;
             }
 
-            const config = projectGenerationDefaultsDraft[model.id] ?? {
+            const config = projectGenerationDefaultsDraft.byModel[selectedModelId] ?? {
               systemPromptTemplate: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
-              settings: getDraftSettingsForModel(model.id, {}),
+              settings: getDraftSettingsForModel(selectedModelId, {}),
             };
 
             return (
               <Card key={assetKind} withBorder radius="lg" p="md">
                 <Stack gap="sm">
-                  <Text fw={700}>{assetKind === "frame" ? "Frame Defaults" : "Transition Defaults"}</Text>
+                  <Text fw={700}>{assetKind === "frame" ? "Image Defaults" : "Video Defaults"}</Text>
                   <GenerationConfigFields
                     assetKind={assetKind}
-                    modelId={model.id}
+                    modelId={selectedModelId}
                     systemPromptTemplate={config.systemPromptTemplate}
-                    settings={getDraftSettingsForModel(model.id, config.settings)}
-                    onModelIdChange={() => {}}
+                    settings={getDraftSettingsForModel(selectedModelId, config.settings)}
+                    onModelIdChange={(modelId) => {
+                      updateProjectSelectedModelDraft(assetKind, modelId);
+                    }}
                     onSystemPromptTemplateChange={(value) => {
-                      updateProjectGenerationDefaultsDraft(model.id, (current) => ({
+                      updateProjectGenerationDefaultsDraft(selectedModelId, (current) => ({
                         ...current,
                         systemPromptTemplate: value,
                       }));
                     }}
                     onSettingChange={(key, value) => {
-                      updateProjectGenerationDefaultsDraft(model.id, (current) => ({
+                      updateProjectGenerationDefaultsDraft(selectedModelId, (current) => ({
                         ...current,
                         settings: {
                           ...current.settings,

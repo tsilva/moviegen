@@ -2,7 +2,9 @@ import type { GenerationAssetKind, GenerationSettings, GenerationSettingValue } 
 
 export const DEFAULT_SYSTEM_PROMPT_TEMPLATE = "{{prompt}}";
 export const SYSTEM_PROMPT_TEMPLATE_TOKEN = "{{prompt}}";
-export const DEFAULT_FRAME_MODEL_ID = "alibaba/wan-2.7-pro/image-edit";
+export const PRO_FRAME_MODEL_ID = "alibaba/wan-2.7-pro/image-edit";
+export const STANDARD_FRAME_MODEL_ID = "alibaba/wan-2.7/image-edit";
+export const DEFAULT_FRAME_MODEL_ID = STANDARD_FRAME_MODEL_ID;
 export const DEFAULT_TRANSITION_MODEL_ID = "bytedance/seedance-v1.5-pro/image-to-video";
 
 type GenerationSettingOption = {
@@ -31,6 +33,12 @@ export const TRANSITION_RESOLUTION_OPTIONS = [
   { value: "1080p", label: "1080p" },
 ] as const;
 
+export const FRAME_RESOLUTION_OPTIONS = [
+  { value: "480p", label: "480p" },
+  { value: "720p", label: "720p" },
+  { value: "1080p", label: "1080p" },
+] as const;
+
 export const TRANSITION_ASPECT_RATIO_OPTIONS = [
   { value: "16:9", label: "16:9" },
   { value: "9:16", label: "9:16" },
@@ -41,11 +49,25 @@ export const TRANSITION_ASPECT_RATIO_OPTIONS = [
 ] as const;
 
 export const MODEL_REGISTRY: Record<string, GenerationModelDefinition> = {
-  [DEFAULT_FRAME_MODEL_ID]: {
-    id: DEFAULT_FRAME_MODEL_ID,
+  [PRO_FRAME_MODEL_ID]: {
+    id: PRO_FRAME_MODEL_ID,
     label: "Wan 2.7 Pro Image Edit",
     assetKind: "frame",
     settings: [],
+  },
+  [STANDARD_FRAME_MODEL_ID]: {
+    id: STANDARD_FRAME_MODEL_ID,
+    label: "Wan 2.7 Image Edit",
+    assetKind: "frame",
+    settings: [
+      {
+        key: "resolution",
+        label: "Resolution",
+        kind: "select",
+        defaultValue: "480p",
+        options: FRAME_RESOLUTION_OPTIONS,
+      },
+    ],
   },
   [DEFAULT_TRANSITION_MODEL_ID]: {
     id: DEFAULT_TRANSITION_MODEL_ID,
@@ -56,21 +78,21 @@ export const MODEL_REGISTRY: Record<string, GenerationModelDefinition> = {
         key: "resolution",
         label: "Resolution",
         kind: "select",
-        defaultValue: "720p",
+        defaultValue: "480p",
         options: TRANSITION_RESOLUTION_OPTIONS,
       },
       {
         key: "aspectRatio",
         label: "Aspect Ratio",
         kind: "select",
-        defaultValue: "16:9",
+        defaultValue: "1:1",
         options: TRANSITION_ASPECT_RATIO_OPTIONS,
       },
       {
         key: "cameraFixed",
         label: "Camera Fixed",
         kind: "boolean",
-        defaultValue: false,
+        defaultValue: true,
       },
       {
         key: "generateAudio",
@@ -152,4 +174,19 @@ export function getTransitionSizeFromSettings(settings: GenerationSettings, fall
   const [widthRatio, heightRatio] = ratio;
   const width = Math.round((height * widthRatio) / heightRatio);
   return `${width}x${height}`;
+}
+
+export function getFrameSizeFromSettings(settings: GenerationSettings, fallbackSize: string) {
+  const resolution = typeof settings.resolution === "string" ? settings.resolution : null;
+  if (!resolution) {
+    return fallbackSize;
+  }
+
+  const sizesByResolution: Record<string, string> = {
+    "480p": "854x480",
+    "720p": "1280x720",
+    "1080p": "1920x1080",
+  };
+
+  return sizesByResolution[resolution] ?? fallbackSize;
 }

@@ -56,6 +56,7 @@ function createFrameView(overrides: Partial<FrameView> = {}): FrameView {
     latestVersion,
     currentVersion: latestVersion,
     galleryVersions: [latestVersion],
+    latestErrorJob: null,
     hasCurrentApproval: true,
     queuedJobs: 0,
     nextAction: null,
@@ -121,6 +122,7 @@ function createTransitionView(overrides: Partial<TransitionView> = {}): Transiti
     latestVideoVersion,
     currentVideo: latestVideoVersion,
     galleryVersions: [latestVideoVersion],
+    latestErrorJob: null,
     hasCurrentApproval: true,
     blockedByFrameIds: [],
     downstreamImpactCount: 0,
@@ -197,9 +199,9 @@ describe("movie creator frame helpers", () => {
     });
 
     expect(getFrameGenerationDraft(frame, selectedVersion.id)).toEqual({
-      modelId: "alibaba/wan-2.7-pro/image-edit",
+      modelId: "alibaba/wan-2.7/image-edit",
       prompt: "Selected generation prompt",
-      settings: {},
+      settings: { resolution: "480p" },
       systemPromptTemplate: "{{prompt}}",
       usePreviousFrameAsReference: false,
     });
@@ -313,10 +315,10 @@ describe("movie creator transition helpers", () => {
       modelId: "bytedance/seedance-v1.5-pro/image-to-video",
       prompt: "Selected clip prompt",
       settings: {
-        aspectRatio: "16:9",
-        cameraFixed: false,
+        aspectRatio: "1:1",
+        cameraFixed: true,
         generateAudio: true,
-        resolution: "720p",
+        resolution: "480p",
       },
       systemPromptTemplate: "{{prompt}}",
     });
