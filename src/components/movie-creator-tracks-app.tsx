@@ -45,11 +45,13 @@ import type {
 } from "@/lib/types";
 import {
   getFrameGenerationDraft,
+  hasActiveGenerationJobs,
+  reconcileGallerySelectionAfterSnapshot,
   getSequenceNextStep,
   getSequenceOverviewStats,
   getTransitionGenerationDraft,
+  shouldApplySyncedSnapshot,
   shouldSyncEditorDraft,
-  shouldAutoSelectGeneratedTile,
 } from "@/components/movie-creator-app.helpers";
 
 type ApiResult = ProjectSnapshot & {
@@ -1016,15 +1018,20 @@ export function MovieCreatorApp({
   const [frameConfigDirty, setFrameConfigDirty] = useState(false);
   const [transitionPromptDraft, setTransitionPromptDraft] = useState("");
   const [transitionConfigDirty, setTransitionConfigDirty] = useState(false);
+  const [syncTick, setSyncTick] = useState(0);
   const previousPendingByEntryRef = useRef<Record<string, boolean>>({});
   const previousDefaultTileByEntryRef = useRef<Record<string, string>>({});
   const frameAutosaveRequestIdRef = useRef(0);
   const transitionAutosaveRequestIdRef = useRef(0);
   const syncedEditorEntryKeyRef = useRef<string | null>(null);
+  const syncIntervalRef = useRef<number | null>(null);
+  const syncRequestIdRef = useRef(0);
+  const syncInFlightRef = useRef(false);
   const movieVideoRef = useRef<HTMLVideoElement | null>(null);
   const trackCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const frameReferenceInputRef = useRef<HTMLInputElement | null>(null);
   const normalizedProjectPath = projectPath.trim();
+  const snapshotProjectPath = snapshot?.projectPath ?? null;
 
   const tracks = snapshot?.tracks ?? [];
   const frames = snapshot?.frames ?? [];
@@ -1072,9 +1079,13 @@ export function MovieCreatorApp({
     });
   }
 
-  function applyProjectSnapshot(result: ProjectSnapshot, options?: { notifyMessage?: string; closeProjectModal?: boolean }) {
+  function applySnapshotUpdate(result: ProjectSnapshot) {
     setSnapshot(result);
     setProjectPath(result.projectPath);
+  }
+
+  function applyProjectSnapshot(result: ProjectSnapshot, options?: { notifyMessage?: string; closeProjectModal?: boolean }) {
+    applySnapshotUpdate(result);
     setSelectedSlot(getSelectionFromSnapshot(result));
     setGallerySelection({});
     previousPendingByEntryRef.current = {};
@@ -1092,6 +1103,35 @@ export function MovieCreatorApp({
       notifications.show({ color: "teal", message: options.notifyMessage });
     }
   }
+
+  const refreshProjectSnapshot = useEffectEvent(async () => {
+    if (!snapshot || syncInFlightRef.current) {
+      return null;
+    }
+
+    const requestId = syncRequestIdRef.current + 1;
+    syncRequestIdRef.current = requestId;
+    syncInFlightRef.current = true;
+
+    try {
+      const result = await requestJson<ProjectSnapshot>("/api/project", {
+        cache: "no-store",
+      });
+
+      if (!shouldApplySyncedSnapshot(requestId, syncRequestIdRef.current)) {
+        return null;
+      }
+
+      applySnapshotUpdate(result);
+      return result;
+    } catch {
+      return null;
+    } finally {
+      if (shouldApplySyncedSnapshot(requestId, syncRequestIdRef.current)) {
+        syncInFlightRef.current = false;
+      }
+    }
+  });
 
   async function loadProject(pathValue: string, options?: { notify?: boolean }) {
     const nextProjectPath = pathValue.trim();
@@ -1115,6 +1155,7 @@ export function MovieCreatorApp({
       } else {
         applyProjectSnapshot(result);
       }
+      setSyncTick((value) => value + 1);
     } catch (error) {
       if (shouldNotify) {
         notifications.show({ color: "red", message: error instanceof Error ? error.message : "Open failed" });
@@ -1238,104 +1279,66 @@ export function MovieCreatorApp({
       return;
     }
 
-    const nextPendingByEntry: Record<string, boolean> = {};
-    const nextDefaultTileByEntry: Record<string, string> = {};
-    const nextEntryKeys = new Set<string>();
-
     setGallerySelection((current) => {
-      let changed = false;
-      const nextSelection = { ...current };
-
-      for (const frame of snapshot.frames) {
-        const key = galleryKey("frame", frame.id);
-        const isPending = frame.status === "queued" || frame.status === "generating";
-        const validTileIds = new Set([GALLERY_ADD_TILE_ID, ...frame.galleryVersions.map((version) => version.id)]);
-        const defaultTileId = getDefaultGalleryTileId(frame);
-        const selectedTileId = nextSelection[key];
-
-        nextEntryKeys.add(key);
-        nextPendingByEntry[key] = isPending;
-        nextDefaultTileByEntry[key] = defaultTileId;
-
-        if (selectedTileId && !validTileIds.has(selectedTileId)) {
-          nextSelection[key] = defaultTileId;
-          changed = true;
-          continue;
-        }
-
-        if (shouldAutoSelectGeneratedTile({
-          selectedTileId,
-          addTileId: GALLERY_ADD_TILE_ID,
-          defaultTileId,
-          previousDefaultTileId: previousDefaultTileByEntryRef.current[key],
-          wasPending: previousPendingByEntryRef.current[key],
-          isPending,
-        })) {
-          nextSelection[key] = defaultTileId;
-          changed = true;
-        }
-      }
-
-      for (const transition of snapshot.transitions) {
-        const key = galleryKey("transition", transition.id);
-        const isPending = transition.videoStatus === "queued" || transition.videoStatus === "generating";
-        const validTileIds = new Set([GALLERY_ADD_TILE_ID, ...transition.galleryVersions.map((version) => version.id)]);
-        const defaultTileId = getDefaultGalleryTileId(transition);
-        const selectedTileId = nextSelection[key];
-
-        nextEntryKeys.add(key);
-        nextPendingByEntry[key] = isPending;
-        nextDefaultTileByEntry[key] = defaultTileId;
-
-        if (selectedTileId && !validTileIds.has(selectedTileId)) {
-          nextSelection[key] = defaultTileId;
-          changed = true;
-          continue;
-        }
-
-        if (shouldAutoSelectGeneratedTile({
-          selectedTileId,
-          addTileId: GALLERY_ADD_TILE_ID,
-          defaultTileId,
-          previousDefaultTileId: previousDefaultTileByEntryRef.current[key],
-          wasPending: previousPendingByEntryRef.current[key],
-          isPending,
-        })) {
-          nextSelection[key] = defaultTileId;
-          changed = true;
-        }
-      }
-
-      for (const key of Object.keys(nextSelection)) {
-        if (!nextEntryKeys.has(key)) {
-          delete nextSelection[key];
-          changed = true;
-        }
-      }
-
-      return changed ? nextSelection : current;
+      const nextState = reconcileGallerySelectionAfterSnapshot({
+        currentSelection: current,
+        snapshot,
+        addTileId: GALLERY_ADD_TILE_ID,
+        previousPendingByEntry: previousPendingByEntryRef.current,
+        previousDefaultTileByEntry: previousDefaultTileByEntryRef.current,
+      });
+      previousPendingByEntryRef.current = nextState.pendingByEntry;
+      previousDefaultTileByEntryRef.current = nextState.defaultTileByEntry;
+      return nextState.selection;
     });
-
-    previousPendingByEntryRef.current = nextPendingByEntry;
-    previousDefaultTileByEntryRef.current = nextDefaultTileByEntry;
   }, [snapshot]);
 
   useEffect(() => {
-    const hasActiveJobs = snapshot?.manifest.jobs.some((job) => job.status === "queued" || job.status === "running");
-    if (!hasActiveJobs) {
+    if (!snapshotProjectPath) {
       return;
     }
 
-    const interval = window.setInterval(() => {
-      void requestJson<ProjectSnapshot>("/api/project")
-        .then(setSnapshot)
-        .catch(() => {});
+    void refreshProjectSnapshot();
+  }, [snapshotProjectPath, syncTick]);
+
+  useEffect(() => {
+    if (syncIntervalRef.current != null) {
+      window.clearInterval(syncIntervalRef.current);
+      syncIntervalRef.current = null;
+    }
+
+    if (!hasActiveGenerationJobs(snapshot)) {
+      return;
+    }
+
+    syncIntervalRef.current = window.setInterval(() => {
+      void refreshProjectSnapshot();
     }, 1000);
 
     return () => {
-      window.clearInterval(interval);
+      if (syncIntervalRef.current != null) {
+        window.clearInterval(syncIntervalRef.current);
+        syncIntervalRef.current = null;
+      }
     };
-  }, [snapshot?.manifest.jobs]);
+  }, [snapshot]);
+
+  useEffect(() => {
+    if (!snapshot) {
+      return;
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void refreshProjectSnapshot();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [snapshot]);
 
   const moviePlaylist: MoviePlaylistEntry[] = transitions.flatMap((transition) => {
     if (!transition.currentVideo) {
@@ -1387,7 +1390,7 @@ export function MovieCreatorApp({
   async function mutate<T extends ApiResult>(url: string, init: RequestInit, successMessage?: string) {
     try {
       const result = await requestJson<T>(url, init);
-      setSnapshot(result);
+      applySnapshotUpdate(result);
       if (successMessage) {
         notifications.show({ color: "teal", message: successMessage });
       }
@@ -1404,7 +1407,7 @@ export function MovieCreatorApp({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(update),
     })
-      .then(setSnapshot)
+      .then(applySnapshotUpdate)
       .catch(() => {});
   }
 
@@ -1579,7 +1582,7 @@ export function MovieCreatorApp({
             return;
           }
 
-          setSnapshot(result);
+          applySnapshotUpdate(result);
           setFrameConfigDirty(false);
         })
         .catch((error) => {
@@ -1747,7 +1750,7 @@ export function MovieCreatorApp({
             return;
           }
 
-          setSnapshot(result);
+          applySnapshotUpdate(result);
           setTransitionConfigDirty(false);
         })
         .catch((error) => {

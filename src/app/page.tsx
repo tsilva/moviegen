@@ -1,3 +1,4 @@
+import { connection } from "next/server";
 import { MovieCreatorApp } from "@/components/movie-creator-tracks-app";
 import { openProject } from "@/lib/project-store";
 import { resumeProjectJobs } from "@/lib/job-runner";
@@ -9,6 +10,7 @@ export default async function HomePage() {
 
   if (DEFAULT_PROJECT_PATH) {
     try {
+      await connection();
       const openedSnapshot = await openProject(DEFAULT_PROJECT_PATH, true);
       initialSnapshot = await resumeProjectJobs(openedSnapshot.projectPath);
     } catch (error) {

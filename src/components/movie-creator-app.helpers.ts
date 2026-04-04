@@ -1,4 +1,4 @@
-import type { FrameView, TransitionView } from "@/lib/types";
+import type { FrameView, ProjectSnapshot, TransitionView } from "@/lib/types";
 
 type SequenceCardActionIntent = "write_prompt" | "generate" | "review" | "pending";
 
@@ -175,6 +175,140 @@ export function shouldAutoSelectGeneratedTile(input: {
   }
 
   return selectedTileId != null && selectedTileId === previousDefaultTileId;
+}
+
+export function hasActiveGenerationJobs(snapshot: Pick<ProjectSnapshot, "manifest"> | null | undefined) {
+  return snapshot?.manifest.jobs.some((job) => job.status === "queued" || job.status === "running") ?? false;
+}
+
+export function shouldApplySyncedSnapshot(requestId: number, latestRequestId: number) {
+  return requestId === latestRequestId;
+}
+
+type GalleryEntry = FrameView | TransitionView;
+
+type ReconcileGallerySelectionInput = {
+  currentSelection: Record<string, string>;
+  snapshot: ProjectSnapshot;
+  addTileId: string;
+  previousPendingByEntry: Record<string, boolean>;
+  previousDefaultTileByEntry: Record<string, string>;
+};
+
+type ReconcileGallerySelectionResult = {
+  selection: Record<string, string>;
+  pendingByEntry: Record<string, boolean>;
+  defaultTileByEntry: Record<string, string>;
+};
+
+function galleryKey(kind: "frame" | "transition", id: string) {
+  return `${kind}:${id}`;
+}
+
+function getDefaultGalleryTileId(entry: GalleryEntry, addTileId: string) {
+  return "currentVersion" in entry ? entry.currentVersion?.id ?? addTileId : entry.currentVideo?.id ?? addTileId;
+}
+
+function reconcileGalleryEntrySelection(
+  nextSelection: Record<string, string>,
+  entry: GalleryEntry,
+  kind: "frame" | "transition",
+  addTileId: string,
+  previousPendingByEntry: Record<string, boolean>,
+  previousDefaultTileByEntry: Record<string, string>,
+  nextPendingByEntry: Record<string, boolean>,
+  nextDefaultTileByEntry: Record<string, string>,
+) {
+  const key = galleryKey(kind, entry.id);
+  const isPending =
+    "currentVersion" in entry
+      ? entry.status === "queued" || entry.status === "generating"
+      : entry.videoStatus === "queued" || entry.videoStatus === "generating";
+  const validTileIds = new Set([
+    addTileId,
+    ...entry.galleryVersions.map((version) => version.id),
+  ]);
+  const defaultTileId = getDefaultGalleryTileId(entry, addTileId);
+  const selectedTileId = nextSelection[key];
+
+  nextPendingByEntry[key] = isPending;
+  nextDefaultTileByEntry[key] = defaultTileId;
+
+  if (selectedTileId && !validTileIds.has(selectedTileId)) {
+    nextSelection[key] = defaultTileId;
+    return true;
+  }
+
+  if (
+    shouldAutoSelectGeneratedTile({
+      selectedTileId,
+      addTileId,
+      defaultTileId,
+      previousDefaultTileId: previousDefaultTileByEntry[key],
+      wasPending: previousPendingByEntry[key],
+      isPending,
+    })
+  ) {
+    nextSelection[key] = defaultTileId;
+    return true;
+  }
+
+  return false;
+}
+
+export function reconcileGallerySelectionAfterSnapshot(
+  input: ReconcileGallerySelectionInput,
+): ReconcileGallerySelectionResult {
+  const nextSelection = { ...input.currentSelection };
+  const nextPendingByEntry: Record<string, boolean> = {};
+  const nextDefaultTileByEntry: Record<string, string> = {};
+  const nextEntryKeys = new Set<string>();
+  let changed = false;
+
+  for (const frame of input.snapshot.frames) {
+    const key = galleryKey("frame", frame.id);
+    nextEntryKeys.add(key);
+    changed =
+      reconcileGalleryEntrySelection(
+        nextSelection,
+        frame,
+        "frame",
+        input.addTileId,
+        input.previousPendingByEntry,
+        input.previousDefaultTileByEntry,
+        nextPendingByEntry,
+        nextDefaultTileByEntry,
+      ) || changed;
+  }
+
+  for (const transition of input.snapshot.transitions) {
+    const key = galleryKey("transition", transition.id);
+    nextEntryKeys.add(key);
+    changed =
+      reconcileGalleryEntrySelection(
+        nextSelection,
+        transition,
+        "transition",
+        input.addTileId,
+        input.previousPendingByEntry,
+        input.previousDefaultTileByEntry,
+        nextPendingByEntry,
+        nextDefaultTileByEntry,
+      ) || changed;
+  }
+
+  for (const key of Object.keys(nextSelection)) {
+    if (!nextEntryKeys.has(key)) {
+      delete nextSelection[key];
+      changed = true;
+    }
+  }
+
+  return {
+    selection: changed ? nextSelection : input.currentSelection,
+    pendingByEntry: nextPendingByEntry,
+    defaultTileByEntry: nextDefaultTileByEntry,
+  };
 }
 
 export function getFrameRepairAction(frame: FrameView) {

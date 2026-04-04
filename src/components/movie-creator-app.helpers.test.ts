@@ -6,13 +6,16 @@ import {
   getFrameDisplayPrompt,
   getFrameGenerationDraft,
   getFrameRepairAction,
+  hasActiveGenerationJobs,
   getSequenceNextStep,
   getSequenceOverviewStats,
-  shouldSyncEditorDraft,
   getTransitionCardMeta,
   getTransitionDisplayPrompt,
   getTransitionGenerationDraft,
+  reconcileGallerySelectionAfterSnapshot,
+  shouldApplySyncedSnapshot,
   shouldAutoSelectGeneratedTile,
+  shouldSyncEditorDraft,
 } from "./movie-creator-app.helpers";
 
 function createVersion(id: string, overrides: Partial<FrameVersion> = {}): FrameVersion {
@@ -327,6 +330,126 @@ describe("movie creator transition helpers", () => {
         isPending: false,
       }),
     ).toBe(false);
+  });
+
+  test("detects active queued or running generation jobs", () => {
+    expect(
+      hasActiveGenerationJobs({
+        manifest: {
+          jobs: [
+            {
+              id: "job_1",
+              kind: "frame_image",
+              targetId: "framecand_1",
+              targetParentId: "frame_1",
+              provider: "atlas",
+              model: "mock-model",
+              status: "running",
+              requestPayload: {},
+              providerPredictionId: null,
+              errorMessage: null,
+              startedAt: null,
+              completedAt: null,
+              createdAt: "2026-04-03T00:00:00.000Z",
+              updatedAt: "2026-04-03T00:00:00.000Z",
+            },
+          ],
+        },
+      } as const),
+    ).toBe(true);
+    expect(
+      hasActiveGenerationJobs({
+        manifest: {
+          jobs: [],
+        },
+      } as const),
+    ).toBe(false);
+  });
+
+  test("rejects stale sync responses", () => {
+    expect(shouldApplySyncedSnapshot(3, 3)).toBe(true);
+    expect(shouldApplySyncedSnapshot(2, 3)).toBe(false);
+  });
+
+  test("reconciles a reloaded pending frame to the finished asset on refresh", () => {
+    const currentVersion = createVersion("framever_current", {
+      sourcePrompt: "Current prompt",
+    });
+    const generatedVersion = createVersion("framever_generated", {
+      sourcePrompt: "Generated prompt",
+    });
+    const snapshot = {
+      projectPath: "/tmp/moviegen",
+      manifest: { jobs: [] },
+      frames: [
+        createFrameView({
+          id: "frame_reload",
+          status: "generated_unreviewed",
+          currentVersion: generatedVersion,
+          latestVersion: generatedVersion,
+          approvedVersion: currentVersion,
+          galleryVersions: [currentVersion, generatedVersion],
+        }),
+      ],
+      transitions: [],
+      tracks: [],
+    } as const;
+
+    const nextState = reconcileGallerySelectionAfterSnapshot({
+      currentSelection: {},
+      snapshot: snapshot as never,
+      addTileId: "__add__",
+      previousPendingByEntry: {
+        "frame:frame_reload": true,
+      },
+      previousDefaultTileByEntry: {
+        "frame:frame_reload": currentVersion.id,
+      },
+    });
+
+    expect(nextState.pendingByEntry["frame:frame_reload"]).toBe(false);
+    expect(nextState.defaultTileByEntry["frame:frame_reload"]).toBe(generatedVersion.id);
+    expect(nextState.selection["frame:frame_reload"]).toBeUndefined();
+  });
+
+  test("uses the first refresh after reload to show a completed clip immediately", () => {
+    const currentVideo = createTransitionVersion("transitionver_current", {
+      sourcePrompt: "Current prompt",
+    });
+    const generatedVideo = createTransitionVersion("transitionver_generated", {
+      sourcePrompt: "Generated prompt",
+    });
+    const transition = createTransitionView({
+      id: "transition_reload",
+      videoStatus: "generated_unreviewed",
+      currentVideo: generatedVideo,
+      latestVideoVersion: generatedVideo,
+      approvedVideoVersion: currentVideo,
+      galleryVersions: [currentVideo, generatedVideo],
+    });
+    const snapshot = {
+      projectPath: "/tmp/moviegen",
+      manifest: { jobs: [] },
+      frames: [transition.fromFrame, transition.toFrame],
+      transitions: [transition],
+      tracks: [],
+    } as const;
+
+    const nextState = reconcileGallerySelectionAfterSnapshot({
+      currentSelection: {},
+      snapshot: snapshot as never,
+      addTileId: "__add__",
+      previousPendingByEntry: {
+        "transition:transition_reload": true,
+      },
+      previousDefaultTileByEntry: {
+        "transition:transition_reload": currentVideo.id,
+      },
+    });
+
+    expect(nextState.pendingByEntry["transition:transition_reload"]).toBe(false);
+    expect(nextState.defaultTileByEntry["transition:transition_reload"]).toBe(generatedVideo.id);
+    expect(nextState.selection["transition:transition_reload"]).toBeUndefined();
   });
 });
 

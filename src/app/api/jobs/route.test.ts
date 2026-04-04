@@ -15,7 +15,7 @@ import { GET } from "./route";
 import { createEmptyManifest } from "@/lib/project-ops";
 import { readProjectSnapshot, saveManifest, setCurrentProjectPath } from "@/lib/project-store";
 
-describe("GET /api/project", () => {
+describe("GET /api/jobs", () => {
   const tempDirs: string[] = [];
 
   afterEach(async () => {
@@ -24,8 +24,8 @@ describe("GET /api/project", () => {
     await Promise.all(tempDirs.splice(0).map((tempDir) => fs.rm(tempDir, { recursive: true, force: true })));
   });
 
-  test("resumes queued work for the current project before returning the snapshot", async () => {
-    const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "moviegen-project-route-"));
+  test("returns fresh jobs for the current project", async () => {
+    const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "moviegen-jobs-route-"));
     tempDirs.push(projectPath);
 
     await saveManifest(projectPath, createEmptyManifest("moviegen"));
@@ -40,7 +40,7 @@ describe("GET /api/project", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(resumeProjectJobsMock).toHaveBeenCalledWith(projectPath);
-    expect(data.projectPath).toBe(projectPath);
+    expect(data.jobs).toEqual(snapshot.manifest.jobs);
   });
 
   test("returns 404 when no project is currently open", async () => {
