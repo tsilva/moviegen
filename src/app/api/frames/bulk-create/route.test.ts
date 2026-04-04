@@ -20,6 +20,7 @@ import type { Frame, ProjectManifest } from "@/lib/types";
 
 function createFrame(name: string, position: number, overrides: Partial<Frame> = {}): Frame {
   const timestamp = nowIso();
+  const generationOverrides = overrides.generationOverrides ?? {};
   return {
     id: createId("frame"),
     position,
@@ -31,6 +32,7 @@ function createFrame(name: string, position: number, overrides: Partial<Frame> =
     createdAt: timestamp,
     updatedAt: timestamp,
     ...overrides,
+    generationOverrides,
   };
 }
 

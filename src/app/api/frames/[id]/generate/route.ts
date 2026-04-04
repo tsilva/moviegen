@@ -9,6 +9,14 @@ const requestSchema = z.object({
   size: z.string().optional(),
   seedMode: z.string().optional(),
   usePreviousFrameAsReference: z.boolean().optional(),
+  generationOverrides: z
+    .object({
+      modelId: z.string().nullable().optional(),
+      systemPromptTemplate: z.string().nullable().optional(),
+      settings: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).nullable().optional(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export async function POST(
@@ -34,6 +42,7 @@ export async function POST(
         [id]: {
           prompt: body.prompt,
           usePreviousFrameAsReference: body.usePreviousFrameAsReference,
+          generationOverrides: body.generationOverrides ?? undefined,
         },
       },
       size: body.size ?? "1280x720",

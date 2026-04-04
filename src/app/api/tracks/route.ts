@@ -19,6 +19,7 @@ export async function POST(request: Request) {
         imagePrompt: "",
         referenceImages: [],
         usePreviousFrameAsReference,
+        generationOverrides: {},
         approvedVersionId: null,
         versions: [],
         createdAt: timestamp,

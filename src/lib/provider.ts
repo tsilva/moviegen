@@ -1,5 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import {
+  getVideoAspectRatioDefault,
+  getVideoCameraFixedDefault,
+  getVideoGenerateAudioDefault,
+  getVideoResolutionDefault,
+} from "@/lib/generation-defaults";
+import { DEFAULT_FRAME_MODEL_ID, DEFAULT_TRANSITION_MODEL_ID, getAtlasFrameRequestModel } from "@/lib/generation-models";
+import type { GenerationSettings } from "@/lib/types";
 
 export type GeneratedFrameAsset = {
   model: string;
@@ -21,6 +29,7 @@ export type GeneratedTransitionAsset = {
 type GenerateFrameImageInput = {
   projectPath: string;
   frameId: string;
+  modelId: string;
   prompt: string;
   referenceImages: string[];
   candidateCount: number;
@@ -33,6 +42,7 @@ type GenerateFrameImageInput = {
 type GenerateTransitionVideoInput = {
   projectPath: string;
   transitionId: string;
+  modelId: string;
   prompt: string;
   fromImagePath: string;
   toImagePath: string;
@@ -40,8 +50,7 @@ type GenerateTransitionVideoInput = {
   duration: number;
   size: string;
   fps: number;
-  cameraFixed?: boolean;
-  generateAudio?: boolean;
+  settings: GenerationSettings;
   signal?: AbortSignal;
 };
 
@@ -57,13 +66,6 @@ type AtlasGenerationResponse = {
 };
 
 const DEFAULT_ATLAS_BASE_URL = "https://api.atlascloud.ai/api/v1";
-const DEFAULT_IMAGE_MODEL = "alibaba/wan-2.7-pro/image-edit";
-const DEFAULT_TEXT_TO_IMAGE_MODEL = "alibaba/wan-2.7-pro/text-to-image";
-const DEFAULT_VIDEO_MODEL = "bytedance/seedance-v1.5-pro/image-to-video";
-const DEFAULT_VIDEO_RESOLUTION = "720p";
-const DEFAULT_VIDEO_ASPECT_RATIO = "16:9";
-const DEFAULT_VIDEO_CAMERA_FIXED = false;
-const DEFAULT_VIDEO_GENERATE_AUDIO = true;
 const POLL_INTERVAL_MS = 2_000;
 const POLL_TIMEOUT_MS = 120_000;
 
@@ -79,73 +81,16 @@ function getAtlasApiKey() {
   return apiKey;
 }
 
-function getEditModel() {
-  return process.env.WAN_IMAGE_MODEL ?? DEFAULT_IMAGE_MODEL;
-}
-
-function getVideoModel() {
-  return process.env.SEEDANCE_VIDEO_MODEL ?? DEFAULT_VIDEO_MODEL;
-}
-
-function getVideoResolution() {
-  return process.env.SEEDANCE_VIDEO_RESOLUTION ?? DEFAULT_VIDEO_RESOLUTION;
-}
-
-function getVideoAspectRatio() {
-  return process.env.SEEDANCE_VIDEO_ASPECT_RATIO ?? DEFAULT_VIDEO_ASPECT_RATIO;
-}
-
-function parseBooleanEnv(value: string | undefined, fallback: boolean, envName: string) {
-  if (value == null) {
-    return fallback;
+function getFrameRequestModel(modelId: string, usesReferenceImages: boolean) {
+  if (usesReferenceImages) {
+    return modelId;
   }
 
-  switch (value.trim().toLowerCase()) {
-    case "1":
-    case "true":
-    case "yes":
-    case "on":
-      return true;
-    case "0":
-    case "false":
-    case "no":
-    case "off":
-      return false;
-    default:
-      throw new Error(`Invalid boolean value for ${envName}: ${value}`);
-  }
-}
-
-function getVideoCameraFixed() {
-  return parseBooleanEnv(
-    process.env.SEEDANCE_VIDEO_CAMERA_FIXED,
-    DEFAULT_VIDEO_CAMERA_FIXED,
-    "SEEDANCE_VIDEO_CAMERA_FIXED",
-  );
-}
-
-function getVideoGenerateAudio() {
-  return parseBooleanEnv(
-    process.env.SEEDANCE_VIDEO_GENERATE_AUDIO,
-    DEFAULT_VIDEO_GENERATE_AUDIO,
-    "SEEDANCE_VIDEO_GENERATE_AUDIO",
-  );
-}
-
-function getTextToImageModel(editModel: string) {
   if (process.env.WAN_TEXT_MODEL) {
     return process.env.WAN_TEXT_MODEL;
   }
 
-  if (editModel.endsWith("/image-edit")) {
-    return editModel.replace(/\/image-edit$/, "/text-to-image");
-  }
-
-  if (editModel.endsWith("/edit")) {
-    return editModel.replace(/\/edit$/, "");
-  }
-
-  return DEFAULT_TEXT_TO_IMAGE_MODEL;
+  return getAtlasFrameRequestModel(modelId, false);
 }
 
 function normalizeSize(size: string) {
@@ -430,13 +375,12 @@ export async function generateFrameImages(input: GenerateFrameImageInput): Promi
   const referenceImages = await Promise.all(
     input.referenceImages.map((reference) => ensureRemoteReference(input.projectPath, reference, input.signal)),
   );
-  const editModel = getEditModel();
-  const model = referenceImages.length > 0 ? editModel : getTextToImageModel(editModel);
+  const requestModel = getFrameRequestModel(input.modelId, referenceImages.length > 0);
   const generatedAssets: GeneratedFrameAsset[] = [];
 
   for (let index = 0; index < input.candidateCount; index += 1) {
     const requestPayload: Record<string, unknown> = {
-      model,
+      model: requestModel,
       prompt: input.prompt,
       size: normalizeSize(input.size),
       seed: input.seed ?? buildSeed(input.seedMode, index),
@@ -483,7 +427,7 @@ export async function generateFrameImages(input: GenerateFrameImageInput): Promi
     );
 
     generatedAssets.push({
-      model,
+      model: input.modelId || DEFAULT_FRAME_MODEL_ID,
       providerPredictionId: predictionId,
       relativePath,
       inputPayload: requestPayload,
@@ -501,21 +445,29 @@ export async function generateTransitionVideo(
     ensureRemoteReference(input.projectPath, input.fromImagePath, input.signal),
     ensureRemoteReference(input.projectPath, input.toImagePath, input.signal),
   ]);
+  const settings = input.settings ?? {};
   const { width, height } = parseGenerationSize(input.size);
-  const model = getVideoModel();
+  const resolution =
+    typeof settings.resolution === "string" ? settings.resolution : getVideoResolutionDefault();
+  const aspectRatio =
+    typeof settings.aspectRatio === "string" ? settings.aspectRatio : getVideoAspectRatioDefault();
+  const cameraFixed =
+    typeof settings.cameraFixed === "boolean" ? settings.cameraFixed : getVideoCameraFixedDefault();
+  const generateAudio =
+    typeof settings.generateAudio === "boolean" ? settings.generateAudio : getVideoGenerateAudioDefault();
   const requestPayload: Record<string, unknown> = {
-    model,
+    model: input.modelId,
     prompt: input.prompt,
     image: fromImage,
     last_image: toImage,
     width,
     height,
-    resolution: getVideoResolution(),
-    aspect_ratio: getVideoAspectRatio(),
+    resolution,
+    aspect_ratio: aspectRatio,
     duration: input.duration,
     fps: input.fps,
-    camera_fixed: input.cameraFixed ?? getVideoCameraFixed(),
-    generate_audio: input.generateAudio ?? getVideoGenerateAudio(),
+    camera_fixed: cameraFixed,
+    generate_audio: generateAudio,
   };
 
   const initial = await atlasRequest<AtlasGenerationResponse>("/model/generateVideo", {
@@ -551,7 +503,7 @@ export async function generateTransitionVideo(
   );
 
   return {
-    model,
+    model: input.modelId || DEFAULT_TRANSITION_MODEL_ID,
     providerPredictionId: predictionId,
     relativePath,
     posterRelativePath: input.posterPath,

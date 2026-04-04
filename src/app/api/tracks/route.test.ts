@@ -16,6 +16,7 @@ function createFrame(name: string, position: number): Frame {
     imagePrompt: `${name} prompt`,
     referenceImages: [],
     usePreviousFrameAsReference: position > 0,
+    generationOverrides: {},
     approvedVersionId: null,
     versions: [],
     createdAt: timestamp,

@@ -1,9 +1,31 @@
 import { z } from "zod";
+import { createDefaultGenerationDefaults } from "@/lib/generation-defaults";
 
 const reviewerDecisionSchema = z.enum(["approved", "rejected", "unreviewed"]);
 const jobStatusSchema = z.enum(["queued", "running", "completed", "error"]);
 const sequenceScopeSchema = z.enum(["active", "archived"]);
 const trackSlotKindSchema = z.enum(["startFrame", "transition", "endFrame"]);
+const generationSettingsSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]));
+const generationOverridesSchema = z.object({
+  modelId: z.string().nullable().optional(),
+  systemPromptTemplate: z.string().nullable().optional(),
+  settings: generationSettingsSchema.nullable().optional(),
+});
+const generationSnapshotSchema = z.object({
+  modelId: z.string(),
+  systemPromptTemplate: z.string(),
+  settings: generationSettingsSchema,
+  resolvedPrompt: z.string(),
+});
+const generationDefaultsSchema = z.object({
+  byModel: z.record(
+    z.string(),
+    z.object({
+      systemPromptTemplate: z.string(),
+      settings: generationSettingsSchema,
+    }),
+  ),
+});
 
 export const frameVersionSchema = z.object({
   id: z.string(),
@@ -20,6 +42,7 @@ export const frameVersionSchema = z.object({
   usePreviousFrameAsReference: z.boolean().nullable().optional(),
   dependencyFrameId: z.string().nullable().optional(),
   dependencyVersionId: z.string().nullable().optional(),
+  generationSnapshot: generationSnapshotSchema.optional(),
 });
 
 export const frameSchema = z.object({
@@ -28,6 +51,7 @@ export const frameSchema = z.object({
   imagePrompt: z.string(),
   referenceImages: z.array(z.string()),
   usePreviousFrameAsReference: z.boolean().default(true),
+  generationOverrides: generationOverridesSchema.default({}),
   approvedVersionId: z.string().nullable(),
   versions: z.array(frameVersionSchema),
   createdAt: z.string(),
@@ -49,6 +73,7 @@ export const transitionVersionSchema = z.object({
   promptRevision: z.number(),
   fromApprovedVersionId: z.string().nullable(),
   toApprovedVersionId: z.string().nullable(),
+  generationSnapshot: generationSnapshotSchema.optional(),
 });
 
 export const transitionSchema = z.object({
@@ -56,6 +81,7 @@ export const transitionSchema = z.object({
   fromFrameId: z.string(),
   toFrameId: z.string(),
   transitionPrompt: z.string(),
+  generationOverrides: generationOverridesSchema.default({}),
   promptRevision: z.number(),
   confirmedFromVersionId: z.string().nullable(),
   confirmedToVersionId: z.string().nullable(),
@@ -92,6 +118,7 @@ export const projectManifestSchema = z.object({
     updatedAt: z.string(),
     schemaVersion: z.number(),
   }),
+  generationDefaults: generationDefaultsSchema.optional(),
   frames: z.array(frameSchema),
   transitions: z.array(transitionSchema),
   jobs: z.array(generationJobSchema),
@@ -130,4 +157,7 @@ export const projectManifestSchema = z.object({
       selectedFrameId: ui.selectedFrameId ?? null,
       selectedTransitionId: ui.selectedTransitionId ?? null,
     })),
-});
+}).transform((manifest) => ({
+  ...manifest,
+  generationDefaults: manifest.generationDefaults ?? createDefaultGenerationDefaults(),
+}));

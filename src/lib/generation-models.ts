@@ -1,0 +1,155 @@
+import type { GenerationAssetKind, GenerationSettings, GenerationSettingValue } from "@/lib/types";
+
+export const DEFAULT_SYSTEM_PROMPT_TEMPLATE = "{{prompt}}";
+export const SYSTEM_PROMPT_TEMPLATE_TOKEN = "{{prompt}}";
+export const DEFAULT_FRAME_MODEL_ID = "alibaba/wan-2.7-pro/image-edit";
+export const DEFAULT_TRANSITION_MODEL_ID = "bytedance/seedance-v1.5-pro/image-to-video";
+
+type GenerationSettingOption = {
+  value: string;
+  label: string;
+};
+
+export type GenerationSettingDefinition = {
+  key: string;
+  label: string;
+  kind: "boolean" | "select";
+  defaultValue: GenerationSettingValue;
+  options?: readonly GenerationSettingOption[];
+};
+
+export type GenerationModelDefinition = {
+  id: string;
+  label: string;
+  assetKind: GenerationAssetKind;
+  settings: readonly GenerationSettingDefinition[];
+};
+
+export const TRANSITION_RESOLUTION_OPTIONS = [
+  { value: "480p", label: "480p" },
+  { value: "720p", label: "720p" },
+  { value: "1080p", label: "1080p" },
+] as const;
+
+export const TRANSITION_ASPECT_RATIO_OPTIONS = [
+  { value: "16:9", label: "16:9" },
+  { value: "9:16", label: "9:16" },
+  { value: "4:3", label: "4:3" },
+  { value: "3:4", label: "3:4" },
+  { value: "1:1", label: "1:1" },
+  { value: "21:9", label: "21:9" },
+] as const;
+
+export const MODEL_REGISTRY: Record<string, GenerationModelDefinition> = {
+  [DEFAULT_FRAME_MODEL_ID]: {
+    id: DEFAULT_FRAME_MODEL_ID,
+    label: "Wan 2.7 Pro Image Edit",
+    assetKind: "frame",
+    settings: [],
+  },
+  [DEFAULT_TRANSITION_MODEL_ID]: {
+    id: DEFAULT_TRANSITION_MODEL_ID,
+    label: "Seedance 1.5 Pro Image to Video",
+    assetKind: "transition",
+    settings: [
+      {
+        key: "resolution",
+        label: "Resolution",
+        kind: "select",
+        defaultValue: "720p",
+        options: TRANSITION_RESOLUTION_OPTIONS,
+      },
+      {
+        key: "aspectRatio",
+        label: "Aspect Ratio",
+        kind: "select",
+        defaultValue: "16:9",
+        options: TRANSITION_ASPECT_RATIO_OPTIONS,
+      },
+      {
+        key: "cameraFixed",
+        label: "Camera Fixed",
+        kind: "boolean",
+        defaultValue: false,
+      },
+      {
+        key: "generateAudio",
+        label: "Generate Audio",
+        kind: "boolean",
+        defaultValue: true,
+      },
+    ],
+  },
+};
+
+export function getModelDefinition(modelId: string) {
+  return MODEL_REGISTRY[modelId] ?? null;
+}
+
+export function getModelsForAssetKind(assetKind: GenerationAssetKind) {
+  return Object.values(MODEL_REGISTRY).filter((model) => model.assetKind === assetKind);
+}
+
+export function getDefaultModelIdForAssetKind(assetKind: GenerationAssetKind) {
+  return assetKind === "frame" ? DEFAULT_FRAME_MODEL_ID : DEFAULT_TRANSITION_MODEL_ID;
+}
+
+export function getModelDefaultSettings(modelId: string): GenerationSettings {
+  const definition = getModelDefinition(modelId);
+  if (!definition) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    definition.settings.map((setting) => [setting.key, setting.defaultValue]),
+  );
+}
+
+export function getAtlasFrameRequestModel(modelId: string, usesReferenceImages: boolean) {
+  if (usesReferenceImages) {
+    return modelId;
+  }
+
+  if (modelId.endsWith("/image-edit")) {
+    return modelId.replace(/\/image-edit$/, "/text-to-image");
+  }
+
+  if (modelId.endsWith("/edit")) {
+    return modelId.replace(/\/edit$/, "");
+  }
+
+  return modelId;
+}
+
+export function getTransitionSizeFromSettings(settings: GenerationSettings, fallbackSize: string) {
+  const resolution = typeof settings.resolution === "string" ? settings.resolution : null;
+  const aspectRatio = typeof settings.aspectRatio === "string" ? settings.aspectRatio : null;
+
+  if (!resolution || !aspectRatio) {
+    return fallbackSize;
+  }
+
+  const baseHeights: Record<string, number> = {
+    "480p": 480,
+    "720p": 720,
+    "1080p": 1080,
+  };
+  const aspectDimensions: Record<string, [number, number]> = {
+    "16:9": [16, 9],
+    "9:16": [9, 16],
+    "4:3": [4, 3],
+    "3:4": [3, 4],
+    "1:1": [1, 1],
+    "21:9": [21, 9],
+  };
+
+  const height = baseHeights[resolution];
+  const ratio = aspectDimensions[aspectRatio];
+  if (!height || !ratio) {
+    return fallbackSize;
+  }
+
+  const [widthRatio, heightRatio] = ratio;
+  const width = Math.round((height * widthRatio) / heightRatio);
+  return `${width}x${height}`;
+}

@@ -18,9 +18,11 @@ import type {
   TransitionVideoStatus,
   TransitionView,
 } from "@/lib/types";
+import { createDefaultGenerationDefaults } from "@/lib/generation-defaults";
+import { DEFAULT_FRAME_MODEL_ID, DEFAULT_TRANSITION_MODEL_ID } from "@/lib/generation-models";
 
-export const IMAGE_MODEL = "alibaba/wan-2.7-pro/image-edit";
-export const VIDEO_MODEL = "bytedance/seedance-v1.5-pro/image-to-video";
+export const IMAGE_MODEL = DEFAULT_FRAME_MODEL_ID;
+export const VIDEO_MODEL = DEFAULT_TRANSITION_MODEL_ID;
 export const MANIFEST_FILENAME = "moviegen.project.json";
 
 export function nowIso() {
@@ -48,8 +50,9 @@ export function createEmptyManifest(name: string): ProjectManifest {
       name,
       createdAt: timestamp,
       updatedAt: timestamp,
-      schemaVersion: 1,
+      schemaVersion: 2,
     },
+    generationDefaults: createDefaultGenerationDefaults(),
     frames: [],
     transitions: [],
     jobs: [],
@@ -984,6 +987,7 @@ export function reconcileTransitions(manifest: ProjectManifest) {
       fromFrameId: pair.fromFrameId,
       toFrameId: pair.toFrameId,
       transitionPrompt: "",
+      generationOverrides: {},
       promptRevision: 0,
       confirmedFromVersionId: null,
       confirmedToVersionId: null,

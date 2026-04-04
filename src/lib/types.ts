@@ -4,6 +4,31 @@ export type SequenceScope = "active" | "archived";
 export type GenerationProvider = "mock" | "atlas";
 export type TrackSlotKind = "startFrame" | "transition" | "endFrame";
 export type TrackSlotStatusColor = "orange" | "gray" | "blue" | "cyan" | "teal" | "red";
+export type GenerationAssetKind = "frame" | "transition";
+export type GenerationSettingValue = string | number | boolean;
+export type GenerationSettings = Record<string, GenerationSettingValue>;
+
+export type ModelGenerationDefaults = {
+  systemPromptTemplate: string;
+  settings: GenerationSettings;
+};
+
+export type ProjectGenerationDefaults = {
+  byModel: Record<string, ModelGenerationDefaults>;
+};
+
+export type GenerationOverrides = {
+  modelId?: string | null;
+  systemPromptTemplate?: string | null;
+  settings?: GenerationSettings | null;
+};
+
+export type GenerationSnapshot = {
+  modelId: string;
+  systemPromptTemplate: string;
+  settings: GenerationSettings;
+  resolvedPrompt: string;
+};
 
 export type ProjectMeta = {
   id: string;
@@ -28,6 +53,7 @@ export type FrameVersion = {
   usePreviousFrameAsReference?: boolean | null;
   dependencyFrameId?: string | null;
   dependencyVersionId?: string | null;
+  generationSnapshot?: GenerationSnapshot;
 };
 
 export type Frame = {
@@ -36,6 +62,7 @@ export type Frame = {
   imagePrompt: string;
   referenceImages: string[];
   usePreviousFrameAsReference: boolean;
+  generationOverrides: GenerationOverrides;
   approvedVersionId: string | null;
   versions: FrameVersion[];
   createdAt: string;
@@ -57,6 +84,7 @@ export type TransitionVersion = {
   promptRevision: number;
   fromApprovedVersionId: string | null;
   toApprovedVersionId: string | null;
+  generationSnapshot?: GenerationSnapshot;
 };
 
 export type Transition = {
@@ -64,6 +92,7 @@ export type Transition = {
   fromFrameId: string;
   toFrameId: string;
   transitionPrompt: string;
+  generationOverrides: GenerationOverrides;
   promptRevision: number;
   confirmedFromVersionId: string | null;
   confirmedToVersionId: string | null;
@@ -106,6 +135,7 @@ export type TrackSlotSelection = {
 
 export type ProjectManifest = {
   project: ProjectMeta;
+  generationDefaults: ProjectGenerationDefaults;
   frames: Frame[];
   transitions: Transition[];
   jobs: GenerationJob[];

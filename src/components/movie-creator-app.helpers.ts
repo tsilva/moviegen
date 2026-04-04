@@ -1,4 +1,5 @@
-import type { FrameView, ProjectSnapshot, TransitionView } from "@/lib/types";
+import { resolveGenerationConfig } from "@/lib/generation-config";
+import type { FrameView, ProjectGenerationDefaults, ProjectSnapshot, TransitionView } from "@/lib/types";
 
 type SequenceCardActionIntent = "write_prompt" | "generate" | "review" | "pending";
 
@@ -75,10 +76,20 @@ export function getFrameDisplayPrompt(frame: FrameView, selectedGalleryTileId: s
   );
 }
 
-export function getFrameGenerationDraft(frame: FrameView, selectedGalleryTileId: string) {
+export function getFrameGenerationDraft(
+  frame: FrameView,
+  selectedGalleryTileId: string,
+  generationDefaults?: ProjectGenerationDefaults | null,
+) {
   const selectedVersion = findFrameVersionByTileId(frame, selectedGalleryTileId);
   const prompt =
     selectedVersion?.sourcePrompt ?? getFallbackFramePrompt(frame) ?? "";
+  const generationSnapshot = selectedVersion?.generationSnapshot ?? resolveGenerationConfig({
+    assetKind: "frame",
+    prompt,
+    generationDefaults: generationDefaults ?? null,
+    assetOverrides: frame.generationOverrides,
+  });
   const usePreviousFrameAsReference = frame.position === 0
     ? false
     : selectedVersion?.usePreviousFrameAsReference ?? frame.usePreviousFrameAsReference;
@@ -86,6 +97,9 @@ export function getFrameGenerationDraft(frame: FrameView, selectedGalleryTileId:
   return {
     prompt,
     usePreviousFrameAsReference,
+    modelId: generationSnapshot.modelId,
+    systemPromptTemplate: generationSnapshot.systemPromptTemplate,
+    settings: generationSnapshot.settings,
   };
 }
 
@@ -98,14 +112,27 @@ export function getTransitionDisplayPrompt(transition: TransitionView, selectedG
   return prompt?.trim() || "No transition prompt yet";
 }
 
-export function getTransitionGenerationDraft(transition: TransitionView, selectedGalleryTileId?: string) {
+export function getTransitionGenerationDraft(
+  transition: TransitionView,
+  selectedGalleryTileId?: string,
+  generationDefaults?: ProjectGenerationDefaults | null,
+) {
   const selectedVersion = selectedGalleryTileId
     ? findTransitionVersionByTileId(transition, selectedGalleryTileId)
     : null;
   const prompt = selectedVersion?.sourcePrompt ?? getFallbackTransitionPrompt(transition) ?? "";
+  const generationSnapshot = selectedVersion?.generationSnapshot ?? resolveGenerationConfig({
+    assetKind: "transition",
+    prompt,
+    generationDefaults: generationDefaults ?? null,
+    assetOverrides: transition.generationOverrides,
+  });
 
   return {
     prompt,
+    modelId: generationSnapshot.modelId,
+    systemPromptTemplate: generationSnapshot.systemPromptTemplate,
+    settings: generationSnapshot.settings,
   };
 }
 

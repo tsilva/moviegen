@@ -10,6 +10,16 @@ const requestSchema = z.object({
   cameraFixed: z.boolean().optional(),
   generateAudio: z.boolean().optional(),
   promptsByTransitionId: z.record(z.string(), z.string()).optional(),
+  generationOverridesByTransitionId: z
+    .record(
+      z.string(),
+      z.object({
+        modelId: z.string().nullable().optional(),
+        systemPromptTemplate: z.string().nullable().optional(),
+        settings: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).nullable().optional(),
+      }),
+    )
+    .optional(),
 });
 
 export async function POST(request: Request) {
@@ -18,10 +28,14 @@ export async function POST(request: Request) {
     const snapshot = await enqueueTransitionGeneration(body.transitionIds, {
       duration: body.duration ?? 4,
       overridesByTransitionId: body.promptsByTransitionId
+        || body.generationOverridesByTransitionId
         ? Object.fromEntries(
-            Object.entries(body.promptsByTransitionId).map(([transitionId, prompt]) => [
+            body.transitionIds.map((transitionId) => [
               transitionId,
-              { prompt },
+              {
+                prompt: body.promptsByTransitionId?.[transitionId],
+                generationOverrides: body.generationOverridesByTransitionId?.[transitionId],
+              },
             ]),
           )
         : undefined,

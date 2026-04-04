@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { createEmptyManifest } from "@/lib/project-ops";
 import type { FrameVersion, FrameView, TransitionVersion, TransitionView } from "@/lib/types";
 import {
   buildBulkFrameRows,
@@ -39,6 +40,7 @@ function createVersion(id: string, overrides: Partial<FrameVersion> = {}): Frame
 
 function createFrameView(overrides: Partial<FrameView> = {}): FrameView {
   const latestVersion = createVersion("framever_latest", { sourcePrompt: "Latest prompt" });
+  const generationOverrides = overrides.generationOverrides ?? {};
   return {
     id: "frame_1",
     position: 1,
@@ -63,6 +65,7 @@ function createFrameView(overrides: Partial<FrameView> = {}): FrameView {
     queueRank: 0,
     disabledReason: null,
     ...overrides,
+    generationOverrides,
   };
 }
 
@@ -87,6 +90,7 @@ function createTransitionVersion(id: string, overrides: Partial<TransitionVersio
 
 function createTransitionView(overrides: Partial<TransitionView> = {}): TransitionView {
   const frameVersion = createVersion("framever_latest", { sourcePrompt: "Latest prompt" });
+  const generationOverrides = overrides.generationOverrides ?? {};
   const frameView = createFrameView({
     currentVersion: frameVersion,
     approvedVersion: frameVersion,
@@ -125,6 +129,7 @@ function createTransitionView(overrides: Partial<TransitionView> = {}): Transiti
     nextAction: null,
     isStale: false,
     ...overrides,
+    generationOverrides,
   };
 }
 
@@ -192,7 +197,10 @@ describe("movie creator frame helpers", () => {
     });
 
     expect(getFrameGenerationDraft(frame, selectedVersion.id)).toEqual({
+      modelId: "alibaba/wan-2.7-pro/image-edit",
       prompt: "Selected generation prompt",
+      settings: {},
+      systemPromptTemplate: "{{prompt}}",
       usePreviousFrameAsReference: false,
     });
   });
@@ -302,7 +310,15 @@ describe("movie creator transition helpers", () => {
     });
 
     expect(getTransitionGenerationDraft(transition, selectedVersion.id)).toEqual({
+      modelId: "bytedance/seedance-v1.5-pro/image-to-video",
       prompt: "Selected clip prompt",
+      settings: {
+        aspectRatio: "16:9",
+        cameraFixed: false,
+        generateAudio: true,
+        resolution: "720p",
+      },
+      systemPromptTemplate: "{{prompt}}",
     });
   });
 
@@ -336,6 +352,7 @@ describe("movie creator transition helpers", () => {
     expect(
       hasActiveGenerationJobs({
         manifest: {
+          ...createEmptyManifest("moviegen"),
           jobs: [
             {
               id: "job_1",
@@ -359,9 +376,7 @@ describe("movie creator transition helpers", () => {
     ).toBe(true);
     expect(
       hasActiveGenerationJobs({
-        manifest: {
-          jobs: [],
-        },
+        manifest: createEmptyManifest("moviegen"),
       } as const),
     ).toBe(false);
   });
@@ -380,7 +395,7 @@ describe("movie creator transition helpers", () => {
     });
     const snapshot = {
       projectPath: "/tmp/moviegen",
-      manifest: { jobs: [] },
+      manifest: createEmptyManifest("moviegen"),
       frames: [
         createFrameView({
           id: "frame_reload",
@@ -429,7 +444,7 @@ describe("movie creator transition helpers", () => {
     });
     const snapshot = {
       projectPath: "/tmp/moviegen",
-      manifest: { jobs: [] },
+      manifest: createEmptyManifest("moviegen"),
       frames: [transition.fromFrame, transition.toFrame],
       transitions: [transition],
       tracks: [],

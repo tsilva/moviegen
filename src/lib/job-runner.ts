@@ -11,12 +11,16 @@ import {
   nowIso,
   reconcileTransitions,
 } from "@/lib/project-ops";
+import { normalizeGenerationOverrides, resolveGenerationConfig } from "@/lib/generation-config";
+import { getTransitionSizeFromSettings } from "@/lib/generation-models";
 import { mutateCurrentProject, mutateProject, readProjectSnapshot } from "@/lib/project-store";
 import { generateFrameImages, generateTransitionVideo } from "@/lib/provider";
 import type {
   Frame,
   FrameView,
   FrameVersion,
+  GenerationOverrides,
+  GenerationSnapshot,
   GenerationJob,
   ProjectManifest,
   ProjectSnapshot,
@@ -33,6 +37,7 @@ type FrameGenerationOptions = {
     {
       prompt?: string;
       usePreviousFrameAsReference?: boolean;
+      generationOverrides?: GenerationOverrides;
     }
   >;
 };
@@ -47,6 +52,7 @@ type TransitionGenerationOptions = {
     string,
     {
       prompt?: string;
+      generationOverrides?: GenerationOverrides;
     }
   >;
 };
@@ -55,7 +61,8 @@ type ClaimedFrameJob = {
   job: GenerationJob;
   frame: Frame;
   projectPath: string;
-  prompt: string;
+  sourcePrompt: string;
+  generationSnapshot: GenerationSnapshot;
   usePreviousFrameAsReference: boolean;
   referenceImages: string[];
   dependencyFrameId: string | null;
@@ -69,7 +76,8 @@ type ClaimedTransitionJob = {
   fromImagePath: string;
   toImagePath: string;
   posterPath: string;
-  prompt: string;
+  sourcePrompt: string;
+  generationSnapshot: GenerationSnapshot;
   promptRevision: number;
   fromApprovedVersionId: string;
   toApprovedVersionId: string;
@@ -129,6 +137,31 @@ function getJobRunnerState(): JobRunnerState {
   }
 
   return global.__moviegenJobRunnerState__;
+}
+
+function readGenerationSnapshot(
+  payload: Record<string, unknown>,
+  assetKind: "frame" | "transition",
+  fallbackPrompt: string,
+) {
+  const rawSnapshot = payload.generationSnapshot;
+  if (
+    rawSnapshot &&
+    typeof rawSnapshot === "object" &&
+    typeof (rawSnapshot as { modelId?: unknown }).modelId === "string" &&
+    typeof (rawSnapshot as { systemPromptTemplate?: unknown }).systemPromptTemplate === "string" &&
+    typeof (rawSnapshot as { resolvedPrompt?: unknown }).resolvedPrompt === "string" &&
+    (rawSnapshot as { settings?: unknown }).settings &&
+    typeof (rawSnapshot as { settings?: unknown }).settings === "object"
+  ) {
+    return rawSnapshot as GenerationSnapshot;
+  }
+
+  return resolveGenerationConfig({
+    assetKind,
+    prompt: fallbackPrompt,
+    generationDefaults: null,
+  });
 }
 
 function abortTrackedJobs(jobIds: string[]) {
@@ -237,9 +270,9 @@ async function claimNextQueuedFrameJob(projectPath: string): Promise<ClaimedFram
         continue;
       }
 
-      const prompt =
+      const sourcePrompt =
         typeof job.requestPayload.prompt === "string" ? job.requestPayload.prompt.trim() : frame.imagePrompt.trim();
-      if (!prompt) {
+      if (!sourcePrompt) {
         const timestamp = nowIso();
         job.status = "error";
         job.errorMessage = "Frame prompt is required";
@@ -280,7 +313,8 @@ async function claimNextQueuedFrameJob(projectPath: string): Promise<ClaimedFram
         job: structuredClone(job),
         frame: structuredClone(frame),
         projectPath,
-        prompt,
+        sourcePrompt,
+        generationSnapshot: readGenerationSnapshot(job.requestPayload, "frame", sourcePrompt),
         usePreviousFrameAsReference,
         referenceImages: resolvedReference.referenceImages,
         dependencyFrameId: resolvedReference.dependencyFrameId,
@@ -403,15 +437,16 @@ async function claimNextQueuedTransitionJob(projectPath: string): Promise<Claime
       }
 
       const startedAt = nowIso();
+      const sourcePrompt =
+        typeof job.requestPayload.prompt === "string"
+          ? job.requestPayload.prompt
+          : transition.transitionPrompt;
       transition.confirmedFromVersionId = resolvedTransition.fromApprovedVersionId;
       transition.confirmedToVersionId = resolvedTransition.toApprovedVersionId;
       transition.invalidationReason = null;
       job.requestPayload = {
         ...job.requestPayload,
-        prompt:
-          typeof job.requestPayload.prompt === "string"
-            ? job.requestPayload.prompt
-            : transition.transitionPrompt,
+        prompt: sourcePrompt,
         promptRevision:
           typeof job.requestPayload.promptRevision === "number"
             ? job.requestPayload.promptRevision
@@ -430,10 +465,8 @@ async function claimNextQueuedTransitionJob(projectPath: string): Promise<Claime
         fromImagePath: resolvedTransition.fromImagePath,
         toImagePath: resolvedTransition.toImagePath,
         posterPath: resolvedTransition.posterPath,
-        prompt:
-          typeof job.requestPayload.prompt === "string"
-            ? job.requestPayload.prompt
-            : transition.transitionPrompt,
+        sourcePrompt,
+        generationSnapshot: readGenerationSnapshot(job.requestPayload, "transition", sourcePrompt),
         promptRevision:
           typeof job.requestPayload.promptRevision === "number"
             ? job.requestPayload.promptRevision
@@ -457,6 +490,8 @@ async function completeFrameJob(
   providerPredictionId: string | null,
   inputPayload: Record<string, unknown>,
   responsePayload: unknown,
+  sourcePrompt: string,
+  generationSnapshot: GenerationSnapshot,
   dependencyFrameId: string | null,
   dependencyVersionId: string | null,
 ) {
@@ -477,8 +512,6 @@ async function completeFrameJob(
 
     const timestamp = nowIso();
     const versionId = createId("framever");
-    const sourcePrompt =
-      typeof job.requestPayload.prompt === "string" ? job.requestPayload.prompt : frame.imagePrompt;
     const usePreviousFrameAsReference =
       typeof job.requestPayload.usePreviousFrameAsReference === "boolean"
         ? job.requestPayload.usePreviousFrameAsReference
@@ -486,7 +519,7 @@ async function completeFrameJob(
 
     job.targetId = versionId;
     job.provider = "atlas";
-    job.model = model || IMAGE_MODEL;
+    job.model = generationSnapshot.modelId || model || IMAGE_MODEL;
     job.status = "completed";
     job.providerPredictionId = providerPredictionId;
     job.requestPayload = inputPayload;
@@ -496,7 +529,7 @@ async function completeFrameJob(
 
     const version: FrameVersion = {
       id: versionId,
-      model: model || IMAGE_MODEL,
+      model: generationSnapshot.modelId || model || IMAGE_MODEL,
       inputPayload,
       responsePayload,
       outputPath: relativePath,
@@ -509,6 +542,7 @@ async function completeFrameJob(
       usePreviousFrameAsReference,
       dependencyFrameId,
       dependencyVersionId,
+      generationSnapshot,
     };
 
     frame.versions.push(version);
@@ -550,6 +584,8 @@ async function completeTransitionJob(
   providerPredictionId: string | null,
   inputPayload: Record<string, unknown>,
   responsePayload: unknown,
+  sourcePrompt: string,
+  generationSnapshot: GenerationSnapshot,
   promptRevision: number,
   fromApprovedVersionId: string,
   toApprovedVersionId: string,
@@ -571,12 +607,10 @@ async function completeTransitionJob(
 
     const timestamp = nowIso();
     const versionId = createId("transitionver");
-    const sourcePrompt =
-      typeof job.requestPayload.prompt === "string" ? job.requestPayload.prompt : transition.transitionPrompt;
 
     job.targetId = versionId;
     job.provider = "atlas";
-    job.model = model || VIDEO_MODEL;
+    job.model = generationSnapshot.modelId || model || VIDEO_MODEL;
     job.status = "completed";
     job.providerPredictionId = providerPredictionId;
     job.requestPayload = inputPayload;
@@ -586,7 +620,7 @@ async function completeTransitionJob(
 
     const version: TransitionVersion = {
       id: versionId,
-      model: model || VIDEO_MODEL,
+      model: generationSnapshot.modelId || model || VIDEO_MODEL,
       inputPayload,
       responsePayload,
       outputPath: relativePath,
@@ -599,6 +633,7 @@ async function completeTransitionJob(
       promptRevision,
       fromApprovedVersionId,
       toApprovedVersionId,
+      generationSnapshot,
     };
 
     transition.versions.push(version);
@@ -678,7 +713,8 @@ async function runQueuedFrameJobs(projectPath: string) {
         const [asset] = await generateFrameImages({
           projectPath,
           frameId: claimed.frame.id,
-          prompt: claimed.prompt,
+          modelId: claimed.generationSnapshot.modelId,
+          prompt: claimed.generationSnapshot.resolvedPrompt,
           referenceImages: claimed.referenceImages,
           candidateCount: 1,
           size: String(claimed.job.requestPayload.size ?? "1280x720"),
@@ -702,6 +738,8 @@ async function runQueuedFrameJobs(projectPath: string) {
           asset.providerPredictionId,
           asset.inputPayload,
           asset.responsePayload,
+          claimed.sourcePrompt,
+          claimed.generationSnapshot,
           claimed.dependencyFrameId,
           claimed.dependencyVersionId,
         );
@@ -742,21 +780,15 @@ async function runQueuedTransitionJobs(projectPath: string) {
         const asset = await generateTransitionVideo({
           projectPath,
           transitionId: claimed.transition.id,
-          prompt: claimed.prompt,
+          modelId: claimed.generationSnapshot.modelId,
+          prompt: claimed.generationSnapshot.resolvedPrompt,
           fromImagePath: claimed.fromImagePath,
           toImagePath: claimed.toImagePath,
           posterPath: claimed.posterPath,
           duration: Number(claimed.job.requestPayload.duration ?? 4),
           size: String(claimed.job.requestPayload.size ?? "1280x720"),
           fps: Number(claimed.job.requestPayload.fps ?? 24),
-          cameraFixed:
-            typeof claimed.job.requestPayload.cameraFixed === "boolean"
-              ? claimed.job.requestPayload.cameraFixed
-              : undefined,
-          generateAudio:
-            typeof claimed.job.requestPayload.generateAudio === "boolean"
-              ? claimed.job.requestPayload.generateAudio
-              : undefined,
+          settings: claimed.generationSnapshot.settings,
           signal: abortController.signal,
         });
 
@@ -769,6 +801,8 @@ async function runQueuedTransitionJobs(projectPath: string) {
           asset.providerPredictionId,
           asset.inputPayload,
           asset.responsePayload,
+          claimed.sourcePrompt,
+          claimed.generationSnapshot,
           claimed.promptRevision,
           claimed.fromApprovedVersionId,
           claimed.toApprovedVersionId,
@@ -892,8 +926,9 @@ export async function importFrameAssets(
 function buildQueuedFrameJobs(
   frame: Frame,
   options: FrameGenerationOptions,
-  prompt: string,
+  sourcePrompt: string,
   usePreviousFrameAsReference: boolean,
+  generationSnapshot: GenerationSnapshot,
 ): GenerationJob[] {
   return Array.from({ length: options.candidateCount }, (_, index) => {
     const timestamp = nowIso();
@@ -908,11 +943,12 @@ function buildQueuedFrameJobs(
       targetId: createId("framecand"),
       targetParentId: frame.id,
       provider: "atlas",
-      model: IMAGE_MODEL,
+      model: generationSnapshot.modelId || IMAGE_MODEL,
       status: "queued",
       requestPayload: {
         frameId: frame.id,
-        prompt,
+        prompt: sourcePrompt,
+        generationSnapshot,
         usePreviousFrameAsReference,
         size: options.size,
         seedMode: options.seedMode,
@@ -931,26 +967,29 @@ function buildQueuedFrameJobs(
 function buildQueuedTransitionJob(
   transition: Transition,
   options: TransitionGenerationOptions,
-  prompt: string,
+  sourcePrompt: string,
+  generationSnapshot: GenerationSnapshot,
 ): GenerationJob {
   const timestamp = nowIso();
+  const size = getTransitionSizeFromSettings(generationSnapshot.settings, options.size);
   const requestPayload: Record<string, unknown> = {
     transitionId: transition.id,
-    prompt,
+    prompt: sourcePrompt,
+    generationSnapshot,
     promptRevision: transition.promptRevision,
     fromApprovedVersionId: transition.confirmedFromVersionId,
     toApprovedVersionId: transition.confirmedToVersionId,
     duration: options.duration,
-    size: options.size,
+    size,
     fps: options.fps,
   };
 
-  if (typeof options.cameraFixed === "boolean") {
-    requestPayload.cameraFixed = options.cameraFixed;
+  if (typeof generationSnapshot.settings.cameraFixed === "boolean") {
+    requestPayload.cameraFixed = generationSnapshot.settings.cameraFixed;
   }
 
-  if (typeof options.generateAudio === "boolean") {
-    requestPayload.generateAudio = options.generateAudio;
+  if (typeof generationSnapshot.settings.generateAudio === "boolean") {
+    requestPayload.generateAudio = generationSnapshot.settings.generateAudio;
   }
 
   return {
@@ -959,7 +998,7 @@ function buildQueuedTransitionJob(
     targetId: createId("transitioncand"),
     targetParentId: transition.id,
     provider: "atlas",
-    model: VIDEO_MODEL,
+    model: generationSnapshot.modelId || VIDEO_MODEL,
     status: "queued",
     requestPayload,
     providerPredictionId: null,
@@ -969,6 +1008,54 @@ function buildQueuedTransitionJob(
     createdAt: timestamp,
     updatedAt: timestamp,
   };
+}
+
+function resolveFrameGenerationSnapshot(
+  manifest: ProjectManifest,
+  frame: Frame,
+  prompt: string,
+  requestOverrides?: GenerationOverrides,
+) {
+  return resolveGenerationConfig({
+    assetKind: "frame",
+    prompt,
+    generationDefaults: manifest.generationDefaults,
+    assetOverrides: frame.generationOverrides,
+    requestOverrides,
+  });
+}
+
+function resolveTransitionGenerationSnapshot(
+  manifest: ProjectManifest,
+  transition: Transition,
+  prompt: string,
+  requestOverrides?: GenerationOverrides,
+) {
+  return resolveGenerationConfig({
+    assetKind: "transition",
+    prompt,
+    generationDefaults: manifest.generationDefaults,
+    assetOverrides: transition.generationOverrides,
+    requestOverrides,
+  });
+}
+
+function getLegacyTransitionRequestOverrides(options: TransitionGenerationOptions): GenerationOverrides | undefined {
+  const settings: Record<string, boolean> = {};
+
+  if (typeof options.cameraFixed === "boolean") {
+    settings.cameraFixed = options.cameraFixed;
+  }
+
+  if (typeof options.generateAudio === "boolean") {
+    settings.generateAudio = options.generateAudio;
+  }
+
+  if (Object.keys(settings).length === 0) {
+    return undefined;
+  }
+
+  return { settings };
 }
 
 export async function enqueueFrameGeneration(
@@ -985,11 +1072,11 @@ export async function enqueueFrameGeneration(
     const timestamp = nowIso();
     for (const frame of frames) {
       const overrides = options.overridesByFrameId?.[frame.id];
-      const prompt = overrides?.prompt ?? frame.imagePrompt;
+      const sourcePrompt = overrides?.prompt ?? frame.imagePrompt;
       const usePreviousFrameAsReference =
         (overrides?.usePreviousFrameAsReference ?? frame.usePreviousFrameAsReference) && frame.position > 0;
 
-      if (prompt.trim().length === 0) {
+      if (sourcePrompt.trim().length === 0) {
         throw new Error("Frame prompt is required");
       }
 
@@ -1001,8 +1088,25 @@ export async function enqueueFrameGeneration(
         frame.usePreviousFrameAsReference = usePreviousFrameAsReference;
       }
 
+      if (overrides?.generationOverrides !== undefined) {
+        frame.generationOverrides = normalizeGenerationOverrides("frame", overrides.generationOverrides);
+      }
+
+      const generationSnapshot = resolveFrameGenerationSnapshot(
+        manifest,
+        frame,
+        sourcePrompt,
+        overrides?.generationOverrides,
+      );
+
       manifest.jobs.push(
-        ...buildQueuedFrameJobs(frame, options, prompt, usePreviousFrameAsReference),
+        ...buildQueuedFrameJobs(
+          frame,
+          options,
+          sourcePrompt,
+          usePreviousFrameAsReference,
+          generationSnapshot,
+        ),
       );
       frame.updatedAt = timestamp;
     }
@@ -1025,9 +1129,11 @@ export async function enqueueTransitionGeneration(
 
     const frameMap = new Map(manifest.frames.map((frame) => [frame.id, frame]));
     const timestamp = nowIso();
+    const sharedRequestOverrides = getLegacyTransitionRequestOverrides(options);
 
     for (const transition of transitions) {
-      const prompt = options.overridesByTransitionId?.[transition.id]?.prompt ?? transition.transitionPrompt;
+      const overrides = options.overridesByTransitionId?.[transition.id];
+      const sourcePrompt = overrides?.prompt ?? transition.transitionPrompt;
       const fromFrame = frameMap.get(transition.fromFrameId) ?? null;
       const toFrame = frameMap.get(transition.toFrameId) ?? null;
       const fromEndpointVersionId = fromFrame ? getCurrentFrameVersionIdForManifest(manifest, fromFrame.id) : null;
@@ -1040,7 +1146,31 @@ export async function enqueueTransitionGeneration(
       transition.confirmedFromVersionId = fromEndpointVersionId;
       transition.confirmedToVersionId = toEndpointVersionId;
       transition.invalidationReason = null;
-      manifest.jobs.push(buildQueuedTransitionJob(transition, options, prompt));
+
+      const requestOverrides =
+        overrides?.generationOverrides != null || sharedRequestOverrides != null
+          ? {
+              ...(sharedRequestOverrides ?? {}),
+              ...(overrides?.generationOverrides ?? {}),
+              settings: {
+                ...(sharedRequestOverrides?.settings ?? {}),
+                ...(overrides?.generationOverrides?.settings ?? {}),
+              },
+            }
+          : undefined;
+
+      if (requestOverrides !== undefined) {
+        transition.generationOverrides = normalizeGenerationOverrides("transition", requestOverrides);
+      }
+
+      const generationSnapshot = resolveTransitionGenerationSnapshot(
+        manifest,
+        transition,
+        sourcePrompt,
+        requestOverrides,
+      );
+
+      manifest.jobs.push(buildQueuedTransitionJob(transition, options, sourcePrompt, generationSnapshot));
       transition.updatedAt = timestamp;
     }
   });
@@ -1063,6 +1193,7 @@ export async function enqueueProjectStartupGeneration(input: {
 
     const transitions = manifest.transitions.filter((item) => input.transitionIds.includes(item.id));
     const timestamp = nowIso();
+    const sharedTransitionRequestOverrides = getLegacyTransitionRequestOverrides(input.transitionOptions);
 
     for (const frame of frames) {
       const prompt = frame.imagePrompt.trim();
@@ -1072,8 +1203,15 @@ export async function enqueueProjectStartupGeneration(input: {
         throw new Error("Frame prompt is required");
       }
 
+      const generationSnapshot = resolveFrameGenerationSnapshot(manifest, frame, prompt);
       manifest.jobs.push(
-        ...buildQueuedFrameJobs(frame, input.frameOptions, prompt, usePreviousFrameAsReference),
+        ...buildQueuedFrameJobs(
+          frame,
+          input.frameOptions,
+          prompt,
+          usePreviousFrameAsReference,
+          generationSnapshot,
+        ),
       );
       frame.updatedAt = timestamp;
     }
@@ -1081,7 +1219,20 @@ export async function enqueueProjectStartupGeneration(input: {
     for (const transition of transitions) {
       const prompt =
         input.transitionOptions.overridesByTransitionId?.[transition.id]?.prompt ?? transition.transitionPrompt;
-      manifest.jobs.push(buildQueuedTransitionJob(transition, input.transitionOptions, prompt));
+      const overrides = input.transitionOptions.overridesByTransitionId?.[transition.id]?.generationOverrides;
+      const requestOverrides =
+        overrides != null || sharedTransitionRequestOverrides != null
+          ? {
+              ...(sharedTransitionRequestOverrides ?? {}),
+              ...(overrides ?? {}),
+              settings: {
+                ...(sharedTransitionRequestOverrides?.settings ?? {}),
+                ...(overrides?.settings ?? {}),
+              },
+            }
+          : undefined;
+      const generationSnapshot = resolveTransitionGenerationSnapshot(manifest, transition, prompt, requestOverrides);
+      manifest.jobs.push(buildQueuedTransitionJob(transition, input.transitionOptions, prompt, generationSnapshot));
       transition.updatedAt = timestamp;
     }
   });

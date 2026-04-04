@@ -46,6 +46,7 @@ function createFrame(name: string, position: number): Frame {
     imagePrompt: `${name} prompt`,
     referenceImages: [],
     usePreviousFrameAsReference: false,
+    generationOverrides: {},
     approvedVersionId: null,
     versions: [],
     createdAt: timestamp,
@@ -1135,9 +1136,12 @@ describe("frame job anchoring", () => {
       expect.objectContaining({
         fromImagePath: fromOutputPath,
         toImagePath: toOutputPath,
+        modelId: "bytedance/seedance-v1.5-pro/image-to-video",
         prompt: "Match cut",
-        cameraFixed: true,
-        generateAudio: false,
+        settings: expect.objectContaining({
+          cameraFixed: true,
+          generateAudio: false,
+        }),
       }),
     );
     expect(generatedTransition.approvedVideoVersionId).toBeTruthy();

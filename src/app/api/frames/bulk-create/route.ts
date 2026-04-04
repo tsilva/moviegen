@@ -31,6 +31,7 @@ export async function POST(request: Request) {
           imagePrompt: row.imagePrompt,
           referenceImages: row.referenceImages ?? [],
           usePreviousFrameAsReference: row.usePreviousFrameAsReference ?? true,
+          generationOverrides: {},
           approvedVersionId: null,
           versions: [],
           createdAt: timestamp,

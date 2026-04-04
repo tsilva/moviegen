@@ -88,6 +88,7 @@ describe("provider transition generation", () => {
     const asset = await generateTransitionVideo({
       projectPath: tempDir,
       transitionId: "transition-1",
+      modelId: "bytedance/seedance-v1.5-pro/image-to-video",
       prompt: "Camera glides from the first shot into the second.",
       fromImagePath,
       toImagePath,
@@ -95,6 +96,12 @@ describe("provider transition generation", () => {
       duration: 4,
       size: "1280x720",
       fps: 24,
+      settings: {
+        resolution: "720p",
+        aspectRatio: "16:9",
+        cameraFixed: false,
+        generateAudio: true,
+      },
     });
 
     expect(asset.posterRelativePath).toBe(path.join("frames", "frame-a", "approved.png"));
@@ -173,6 +180,7 @@ describe("provider transition generation", () => {
     await generateTransitionVideo({
       projectPath: tempDir,
       transitionId: "transition-1",
+      modelId: "bytedance/seedance-v1.5-pro/image-to-video",
       prompt: "Locked-off shot with no audio.",
       fromImagePath,
       toImagePath,
@@ -180,8 +188,12 @@ describe("provider transition generation", () => {
       duration: 4,
       size: "1280x720",
       fps: 24,
-      cameraFixed: true,
-      generateAudio: false,
+      settings: {
+        resolution: "720p",
+        aspectRatio: "16:9",
+        cameraFixed: true,
+        generateAudio: false,
+      },
     });
 
     const generateVideoRequest = fetchMock.mock.calls[2];
