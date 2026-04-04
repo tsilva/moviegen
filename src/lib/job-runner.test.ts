@@ -26,9 +26,12 @@ import {
   reorderFrames,
 } from "./project-ops";
 import {
+  cancelFrameGeneration,
+  cancelTransitionGeneration,
   enqueueFrameGeneration,
   enqueueProjectStartupGeneration,
   enqueueTransitionGeneration,
+  importFrameAssets,
   resumeProjectJobs,
 } from "./job-runner";
 import type { GeneratedFrameAsset, GeneratedTransitionAsset } from "./provider";
@@ -146,19 +149,67 @@ async function waitForJobToStart(
   throw new Error(`Timed out waiting for ${kind} job to start`);
 }
 
-async function waitForAssertion(assertion: () => void) {
+async function waitForAssertion(assertion: () => void | Promise<void>) {
   const deadline = Date.now() + 2_000;
 
   while (Date.now() < deadline) {
     try {
-      assertion();
+      await assertion();
       return;
     } catch {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
   }
 
-  assertion();
+  await assertion();
+}
+
+async function waitForRunnerIdle(projectPath: string) {
+  const deadline = Date.now() + 2_000;
+
+  while (Date.now() < deadline) {
+    const runnerState = (globalThis as Record<string, unknown>).__moviegenJobRunnerState__ as
+      | {
+          processingFrameProjects: Set<string>;
+          processingTransitionProjects: Set<string>;
+        }
+      | undefined;
+
+    const frameBusy = runnerState?.processingFrameProjects.has(projectPath) ?? false;
+    const transitionBusy = runnerState?.processingTransitionProjects.has(projectPath) ?? false;
+
+    if (!frameBusy && !transitionBusy) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  throw new Error("Timed out waiting for the job runner to go idle");
+}
+
+async function waitForAllRunnersToGoIdle() {
+  const deadline = Date.now() + 2_000;
+
+  while (Date.now() < deadline) {
+    const runnerState = (globalThis as Record<string, unknown>).__moviegenJobRunnerState__ as
+      | {
+          processingFrameProjects: Set<string>;
+          processingTransitionProjects: Set<string>;
+        }
+      | undefined;
+
+    const activeFrameProjects = runnerState?.processingFrameProjects.size ?? 0;
+    const activeTransitionProjects = runnerState?.processingTransitionProjects.size ?? 0;
+
+    if (activeFrameProjects === 0 && activeTransitionProjects === 0) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  throw new Error("Timed out waiting for all job runner work to finish");
 }
 
 describe("frame job anchoring", () => {
@@ -187,10 +238,11 @@ describe("frame job anchoring", () => {
   });
 
   afterEach(async () => {
+    await waitForAllRunnersToGoIdle();
+    await Promise.all(tempDirs.splice(0).map((tempDir) => fs.rm(tempDir, { recursive: true, force: true })));
     delete (globalThis as Record<string, unknown>).__moviegenRuntimeState__;
     delete (globalThis as Record<string, unknown>).__moviegenJobRunnerState__;
     await new Promise((resolve) => setTimeout(resolve, 0));
-    await Promise.all(tempDirs.splice(0).map((tempDir) => fs.rm(tempDir, { recursive: true, force: true })));
   });
 
   test("uses explicit reference images when previous-frame anchoring is off", async () => {
@@ -282,6 +334,51 @@ describe("frame job anchoring", () => {
 
     expect(generatedFrame.approvedVersionId).toBeTruthy();
     expect(approvedVersion?.reviewerDecision).toBe("approved");
+  });
+
+  test("imports uploaded frame assets directly without calling the generator", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    const importedPath = path.join("frames", "references", "uploaded.png");
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const second = createFrame("Second", 1);
+      draft.frames = [first, second];
+      reconcileTransitions(draft);
+      return draft;
+    });
+
+    const snapshot = await importFrameAssets(manifest.frames[0]!.id, [importedPath], {
+      usePreviousFrameAsReference: false,
+    });
+
+    const importedFrame = snapshot.manifest.frames[0]!;
+    const importedVersion = importedFrame.versions.at(-1);
+    const importJob = snapshot.manifest.jobs.at(-1);
+
+    expect(generateFrameImagesMock).not.toHaveBeenCalled();
+    expect(importedFrame.approvedVersionId).toBe(importedVersion?.id);
+    expect(importedVersion).toMatchObject({
+      model: "uploaded/image",
+      outputPath: importedPath,
+      thumbnailPath: importedPath,
+      sourcePrompt: null,
+      reviewerDecision: "approved",
+    });
+    expect(importJob).toMatchObject({
+      kind: "frame_image",
+      provider: "mock",
+      model: "uploaded/image",
+      status: "completed",
+      requestPayload: {
+        mode: "direct_upload",
+        directAssetPath: importedPath,
+      },
+    });
+    expect(snapshot.manifest.transitions[0]?.invalidationReason).toBe("endpoint_versions_changed");
+    expect(snapshot.frames[0]?.currentVersion?.outputPath).toBe(importedPath);
   });
 
   test("new generated frame replaces an existing current frame when it is still current", async () => {
@@ -383,6 +480,70 @@ describe("frame job anchoring", () => {
     expect(generatedFrame.approvedVersionId).toBe(latestVersion?.id);
     expect(latestVersion?.reviewerDecision).toBe("approved");
     expect(latestVersion?.sourcePrompt).toBe("First prompt");
+  });
+
+  test("stopping an in-flight frame generation removes the active job and ignores a late result", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    let resolveGeneration:
+      | ((value: Array<{
+          model: string;
+          providerPredictionId: string;
+          relativePath: string;
+          inputPayload: Record<string, unknown>;
+        }>) => void)
+      | null = null;
+    generateFrameImagesMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveGeneration = resolve;
+        }),
+    );
+
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      draft.frames = [createFrame("First", 0)];
+      return draft;
+    });
+
+    await enqueueFrameGeneration([manifest.frames[0]!.id], {
+      candidateCount: 1,
+      size: "1280x720",
+      seedMode: "random",
+    });
+
+    await waitForJobToStart(projectPath, "frame_image");
+
+    const canceledSnapshot = await cancelFrameGeneration(manifest.frames[0]!.id);
+    expect(canceledSnapshot.manifest.jobs).toHaveLength(0);
+    expect(canceledSnapshot.manifest.frames[0]!.versions).toHaveLength(0);
+
+    const finishFrameGeneration = resolveGeneration;
+    if (!finishFrameGeneration) {
+      throw new Error("Expected frame generation promise to be pending");
+    }
+
+    (finishFrameGeneration as (value: Array<{
+      model: string;
+      providerPredictionId: string;
+      relativePath: string;
+      inputPayload: Record<string, unknown>;
+    }>) => void)([
+      {
+        model: "mock-edit-model",
+        providerPredictionId: "pred_frame_stopped",
+        relativePath: path.join("frames", "generated", "stopped-late.png"),
+        inputPayload: { model: "mock-edit-model" },
+      },
+    ]);
+
+    await waitForAssertion(async () => {
+      const snapshot = await readProjectSnapshot(projectPath);
+      expect(snapshot.manifest.jobs).toHaveLength(0);
+      expect(snapshot.manifest.frames[0]!.versions).toHaveLength(0);
+    });
+    await waitForRunnerIdle(projectPath);
   });
 
   test("queues explicit generation overrides and persists them as the latest frame defaults", async () => {
@@ -945,6 +1106,8 @@ describe("frame job anchoring", () => {
       duration: 4,
       size: "1280x720",
       fps: 24,
+      cameraFixed: true,
+      generateAudio: false,
     });
 
     expect(queuedSnapshot.manifest.transitions[0]?.confirmedFromVersionId).toBe(
@@ -958,6 +1121,8 @@ describe("frame job anchoring", () => {
       prompt: "Match cut",
       fromApprovedVersionId: manifest.frames[0]!.approvedVersionId,
       toApprovedVersionId: manifest.frames[1]!.approvedVersionId,
+      cameraFixed: true,
+      generateAudio: false,
     });
 
     const settledSnapshot = await waitForTransitionJobToSettle(projectPath);
@@ -971,6 +1136,8 @@ describe("frame job anchoring", () => {
         fromImagePath: fromOutputPath,
         toImagePath: toOutputPath,
         prompt: "Match cut",
+        cameraFixed: true,
+        generateAudio: false,
       }),
     );
     expect(generatedTransition.approvedVideoVersionId).toBeTruthy();
@@ -1136,6 +1303,83 @@ describe("frame job anchoring", () => {
     expect(latestVersion?.reviewerDecision).toBe("unreviewed");
     expect(latestVersion?.promptRevision).toBe(1);
     expect(latestVersion?.sourcePrompt).toBe("Match cut");
+  });
+
+  test("stopping an in-flight transition generation removes the active job and ignores a late result", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    let resolveGeneration:
+      | ((value: {
+          model: string;
+          providerPredictionId: string;
+          relativePath: string;
+          posterRelativePath: string;
+          inputPayload: Record<string, unknown>;
+        }) => void)
+      | null = null;
+    generateTransitionVideoMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveGeneration = resolve;
+        }),
+    );
+
+    const fromOutputPath = path.join("frames", "first", "approved.png");
+    const toOutputPath = path.join("frames", "second", "approved.png");
+
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const second = createFrame("Second", 1);
+      const firstVersion = createFrameVersion(fromOutputPath);
+      const secondVersion = createFrameVersion(toOutputPath);
+      first.versions.push(firstVersion);
+      second.versions.push(secondVersion);
+      first.approvedVersionId = firstVersion.id;
+      second.approvedVersionId = secondVersion.id;
+      draft.frames = [first, second];
+      reconcileTransitions(draft);
+      return draft;
+    });
+
+    await enqueueTransitionGeneration([manifest.transitions[0]!.id], {
+      duration: 4,
+      size: "1280x720",
+      fps: 24,
+    });
+
+    await waitForJobToStart(projectPath, "transition_video");
+
+    const canceledSnapshot = await cancelTransitionGeneration(manifest.transitions[0]!.id);
+    expect(canceledSnapshot.manifest.jobs).toHaveLength(0);
+    expect(canceledSnapshot.manifest.transitions[0]!.versions).toHaveLength(0);
+
+    const finishTransitionGeneration = resolveGeneration;
+    if (!finishTransitionGeneration) {
+      throw new Error("Expected transition generation promise to be pending");
+    }
+
+    (finishTransitionGeneration as (value: {
+      model: string;
+      providerPredictionId: string;
+      relativePath: string;
+      posterRelativePath: string;
+      inputPayload: Record<string, unknown>;
+    }) => void)({
+      model: "mock-video-model",
+      providerPredictionId: "pred_transition_stopped",
+      relativePath: path.join("transitions", "generated", "stopped-late.mp4"),
+      posterRelativePath: path.join("transitions", "generated", "stopped-late.png"),
+      inputPayload: { model: "mock-video-model" },
+    });
+
+    await waitForAssertion(async () => {
+      const snapshot = await readProjectSnapshot(projectPath);
+      expect(snapshot.manifest.jobs).toHaveLength(0);
+      expect(snapshot.manifest.transitions[0]!.versions).toHaveLength(0);
+    });
+    await waitForRunnerIdle(projectPath);
   });
 
   test("transition generation allows an empty prompt", async () => {

@@ -29,6 +29,7 @@ import {
   IconInfoCircle,
   IconPlayerPause,
   IconPlayerPlay,
+  IconPlayerStop,
   IconPlus,
   IconTrash,
 } from "@tabler/icons-react";
@@ -47,6 +48,7 @@ import {
   getSequenceNextStep,
   getSequenceOverviewStats,
   getTransitionGenerationDraft,
+  shouldSyncEditorDraft,
   shouldAutoSelectGeneratedTile,
 } from "@/components/movie-creator-app.helpers";
 
@@ -78,12 +80,13 @@ type AssetGalleryProps<TVersion extends FrameVersion | TransitionVersion> = {
   title: string;
   versions: TVersion[];
   selectedTileId: string;
-  pending: boolean;
+  pendingLabel?: string | null;
   kind: "frame" | "transition";
   getVersionLabel?: (version: TVersion) => string;
   onDropFiles?: (files: File[]) => void | Promise<void>;
   onSelectVersion: (versionId: string) => void;
   onOpenInfo: (version: TVersion) => void;
+  onStopPending?: () => void | Promise<void>;
 };
 
 type SequenceOverviewProps = {
@@ -226,12 +229,13 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
   title,
   versions,
   selectedTileId,
-  pending,
+  pendingLabel,
   kind,
   getVersionLabel,
   onDropFiles,
   onSelectVersion,
   onOpenInfo,
+  onStopPending,
 }: AssetGalleryProps<TVersion>) {
   const [isDropActive, setIsDropActive] = useState(false);
   const canDropFiles = kind === "frame" && onDropFiles != null;
@@ -322,7 +326,7 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
           outlineOffset: 6,
         }}
       >
-        {pending ? (
+        {pendingLabel ? (
           <Box
             key={GALLERY_ADD_TILE_ID}
             style={{
@@ -357,14 +361,35 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
               >
                 <Loader size="sm" color="cyan" />
                 <Text fw={600} size="sm">
-                  Waiting
+                  {pendingLabel}
                 </Text>
                 <Text c="dimmed" size="xs" ta="center">
-                  {kind === "frame" ? "A new asset is queued." : "A new clip is queued."}
+                  {kind === "frame"
+                    ? pendingLabel === "Queued"
+                      ? "A new asset is queued."
+                      : "A new asset is being generated."
+                    : pendingLabel === "Queued"
+                      ? "A new clip is queued."
+                      : "A new clip is being generated."}
                 </Text>
               </Flex>
+              <Button
+                size="xs"
+                variant="light"
+                color="red"
+                leftSection={<IconPlayerStop size={14} aria-hidden="true" />}
+                onClick={() => void onStopPending?.()}
+              >
+                Stop
+              </Button>
               <Text c="dimmed" size="xs" truncate>
-                {kind === "frame" ? "Waiting for asset" : "Waiting for clip"}
+                {kind === "frame"
+                  ? pendingLabel === "Queued"
+                    ? "Waiting for asset"
+                    : "Generating asset"
+                  : pendingLabel === "Queued"
+                    ? "Waiting for clip"
+                    : "Generating clip"}
               </Text>
             </Stack>
           </Box>
@@ -995,6 +1020,7 @@ export function MovieCreatorApp({
   const previousDefaultTileByEntryRef = useRef<Record<string, string>>({});
   const frameAutosaveRequestIdRef = useRef(0);
   const transitionAutosaveRequestIdRef = useRef(0);
+  const syncedEditorEntryKeyRef = useRef<string | null>(null);
   const movieVideoRef = useRef<HTMLVideoElement | null>(null);
   const trackCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const frameReferenceInputRef = useRef<HTMLInputElement | null>(null);
@@ -1122,10 +1148,11 @@ export function MovieCreatorApp({
 
   const syncSelectedEditorDrafts = useEffectEvent(
     (nextState:
-      | { kind: "frame"; prompt: string; usePreviousFrameAsReference: boolean }
-      | { kind: "transition"; prompt: string }
+      | { kind: "frame"; entryId: string; prompt: string; usePreviousFrameAsReference: boolean }
+      | { kind: "transition"; entryId: string; prompt: string }
       | null) => {
       if (!nextState) {
+        syncedEditorEntryKeyRef.current = null;
         setFramePromptDraft("");
         setFrameUsePreviousDraft(false);
         setFrameConfigDirty(false);
@@ -1133,6 +1160,26 @@ export function MovieCreatorApp({
         setTransitionConfigDirty(false);
         return;
       }
+
+      const nextEntryKey = `${nextState.kind}:${nextState.entryId}`;
+      const shouldSync =
+        nextState.kind === "frame"
+          ? shouldSyncEditorDraft({
+              isDirty: frameConfigDirty,
+              currentEntryKey: syncedEditorEntryKeyRef.current,
+              nextEntryKey,
+            })
+          : shouldSyncEditorDraft({
+              isDirty: transitionConfigDirty,
+              currentEntryKey: syncedEditorEntryKeyRef.current,
+              nextEntryKey,
+            });
+
+      if (!shouldSync) {
+        return;
+      }
+
+      syncedEditorEntryKeyRef.current = nextEntryKey;
 
       if (nextState.kind === "frame") {
         setFramePromptDraft(nextState.prompt);
@@ -1148,11 +1195,12 @@ export function MovieCreatorApp({
     },
   );
 
-  useEffect(() => {
+  const syncCurrentSelectionDraft = useEffectEvent(() => {
     if (selectedFrame) {
       const draft = getFrameGenerationDraft(selectedFrame, selectedFrameTileId);
       syncSelectedEditorDrafts({
         kind: "frame",
+        entryId: selectedFrame.id,
         prompt: draft.prompt,
         usePreviousFrameAsReference: draft.usePreviousFrameAsReference,
       });
@@ -1163,19 +1211,24 @@ export function MovieCreatorApp({
       const draft = getTransitionGenerationDraft(selectedTransition, selectedTransitionTileId);
       syncSelectedEditorDrafts({
         kind: "transition",
+        entryId: selectedTransition.id,
         prompt: draft.prompt,
       });
       return;
     }
 
     syncSelectedEditorDrafts(null);
+  });
+
+  useEffect(() => {
+    syncCurrentSelectionDraft();
   }, [
+    frameConfigDirty,
+    transitionConfigDirty,
     selectedFrame?.id,
     selectedTransition?.id,
     selectedFrameTileId,
     selectedTransitionTileId,
-    selectedFrame,
-    selectedTransition,
   ]);
 
   useEffect(() => {
@@ -1431,14 +1484,18 @@ export function MovieCreatorApp({
     prompt: string,
     usePreviousFrameAsReference: boolean,
     successMessage = "Queued frame generation",
+    directAssetPaths?: string[],
   ) {
-    setSelectedGalleryTile("frame", frame.id, GALLERY_ADD_TILE_ID);
+    if (!directAssetPaths?.length) {
+      setSelectedGalleryTile("frame", frame.id, GALLERY_ADD_TILE_ID);
+    }
     return mutate(
       `/api/frames/${frame.id}/generate`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          directAssetPaths,
           prompt,
           usePreviousFrameAsReference,
         }),
@@ -1482,6 +1539,19 @@ export function MovieCreatorApp({
       prompt,
       frame.position === 0 ? false : frameUsePreviousDraft,
     );
+  }
+
+  async function stopSelectedFrameGeneration(frame: FrameView) {
+    const fallbackTileId = frame.currentVersion?.id ?? frame.latestVersion?.id ?? GALLERY_ADD_TILE_ID;
+    const result = await mutate(
+      `/api/frames/${frame.id}/stop`,
+      { method: "POST" },
+      "Stopped frame generation",
+    );
+
+    if (result) {
+      setSelectedGalleryTile("frame", frame.id, fallbackTileId);
+    }
   }
 
   useEffect(() => {
@@ -1544,6 +1614,34 @@ export function MovieCreatorApp({
         body: formData,
       });
 
+      const prompt = framePromptDraft.trim() || frame.imagePrompt.trim();
+      if (!prompt) {
+        const saved = await mutate(
+          `/api/frames/${frame.id}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              usePreviousFrameAsReference: false,
+            }),
+          },
+        );
+        if (!saved) {
+          return;
+        }
+
+        setFrameUsePreviousDraft(false);
+
+        await queueFrameGeneration(
+          frame,
+          "",
+          false,
+          `Imported ${upload.paths.length} frame asset${upload.paths.length === 1 ? "" : "s"}`,
+          upload.paths,
+        );
+        return;
+      }
+
       const saved = await mutate(
         `/api/frames/${frame.id}`,
         {
@@ -1560,15 +1658,6 @@ export function MovieCreatorApp({
       }
 
       setFrameUsePreviousDraft(false);
-
-      const prompt = framePromptDraft.trim() || frame.imagePrompt.trim();
-      if (!prompt) {
-        notifications.show({
-          color: "teal",
-          message: `Added ${upload.paths.length} reference image${upload.paths.length === 1 ? "" : "s"}. Add a frame prompt to generate from them.`,
-        });
-        return;
-      }
 
       await queueFrameGeneration(
         frame,
@@ -1620,6 +1709,19 @@ export function MovieCreatorApp({
       },
       "Queued transition generation",
     );
+  }
+
+  async function stopSelectedTransitionGeneration(transition: TransitionView) {
+    const fallbackTileId = transition.currentVideo?.id ?? transition.latestVideoVersion?.id ?? GALLERY_ADD_TILE_ID;
+    const result = await mutate(
+      `/api/transitions/${transition.id}/stop`,
+      { method: "POST" },
+      "Stopped transition generation",
+    );
+
+    if (result) {
+      setSelectedGalleryTile("transition", transition.id, fallbackTileId);
+    }
   }
 
   useEffect(() => {
@@ -2018,12 +2120,19 @@ export function MovieCreatorApp({
                               title="Compatible Frames"
                               versions={selectedFrame.galleryVersions}
                               selectedTileId={selectedFrameTileId}
-                              pending={selectedFrame.status === "queued" || selectedFrame.status === "generating"}
+                              pendingLabel={
+                                selectedFrame.status === "queued"
+                                  ? "Queued"
+                                  : selectedFrame.status === "generating"
+                                    ? "Generating"
+                                    : null
+                              }
                               kind="frame"
                               getVersionLabel={(version) => version.sourcePrompt?.trim() || "No frame prompt yet"}
                               onDropFiles={(files) => void handleFrameReferenceDrop(selectedFrame, files)}
                               onSelectVersion={(versionId) => void selectFrameVersion(selectedFrame, versionId)}
                               onOpenInfo={(version) => openAssetInfo("frame", version)}
+                              onStopPending={() => void stopSelectedFrameGeneration(selectedFrame)}
                             />
                           </Stack>
                         ) : selectedTransition ? (
@@ -2085,14 +2194,19 @@ export function MovieCreatorApp({
                               title="Compatible Clips"
                               versions={selectedTransition.galleryVersions}
                               selectedTileId={selectedTransitionTileId}
-                              pending={
+                              pendingLabel={
                                 selectedTransition.videoStatus === "queued" ||
                                 selectedTransition.videoStatus === "generating"
+                                  ? selectedTransition.videoStatus === "queued"
+                                    ? "Queued"
+                                    : "Generating"
+                                  : null
                               }
                               kind="transition"
                               getVersionLabel={(version) => version.sourcePrompt?.trim() || "No transition prompt yet"}
                               onSelectVersion={(versionId) => void selectTransitionVersion(selectedTransition, versionId)}
                               onOpenInfo={(version) => openAssetInfo("transition", version)}
+                              onStopPending={() => void stopSelectedTransitionGeneration(selectedTransition)}
                             />
                           </Stack>
                         ) : null}

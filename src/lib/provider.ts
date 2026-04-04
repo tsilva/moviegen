@@ -27,6 +27,7 @@ type GenerateFrameImageInput = {
   size: string;
   seedMode: string;
   seed?: number;
+  signal?: AbortSignal;
 };
 
 type GenerateTransitionVideoInput = {
@@ -39,6 +40,9 @@ type GenerateTransitionVideoInput = {
   duration: number;
   size: string;
   fps: number;
+  cameraFixed?: boolean;
+  generateAudio?: boolean;
+  signal?: AbortSignal;
 };
 
 type AtlasGenerationResponse = {
@@ -58,6 +62,8 @@ const DEFAULT_TEXT_TO_IMAGE_MODEL = "alibaba/wan-2.7-pro/text-to-image";
 const DEFAULT_VIDEO_MODEL = "bytedance/seedance-v1.5-pro/image-to-video";
 const DEFAULT_VIDEO_RESOLUTION = "720p";
 const DEFAULT_VIDEO_ASPECT_RATIO = "16:9";
+const DEFAULT_VIDEO_CAMERA_FIXED = false;
+const DEFAULT_VIDEO_GENERATE_AUDIO = true;
 const POLL_INTERVAL_MS = 2_000;
 const POLL_TIMEOUT_MS = 120_000;
 
@@ -87,6 +93,43 @@ function getVideoResolution() {
 
 function getVideoAspectRatio() {
   return process.env.SEEDANCE_VIDEO_ASPECT_RATIO ?? DEFAULT_VIDEO_ASPECT_RATIO;
+}
+
+function parseBooleanEnv(value: string | undefined, fallback: boolean, envName: string) {
+  if (value == null) {
+    return fallback;
+  }
+
+  switch (value.trim().toLowerCase()) {
+    case "1":
+    case "true":
+    case "yes":
+    case "on":
+      return true;
+    case "0":
+    case "false":
+    case "no":
+    case "off":
+      return false;
+    default:
+      throw new Error(`Invalid boolean value for ${envName}: ${value}`);
+  }
+}
+
+function getVideoCameraFixed() {
+  return parseBooleanEnv(
+    process.env.SEEDANCE_VIDEO_CAMERA_FIXED,
+    DEFAULT_VIDEO_CAMERA_FIXED,
+    "SEEDANCE_VIDEO_CAMERA_FIXED",
+  );
+}
+
+function getVideoGenerateAudio() {
+  return parseBooleanEnv(
+    process.env.SEEDANCE_VIDEO_GENERATE_AUDIO,
+    DEFAULT_VIDEO_GENERATE_AUDIO,
+    "SEEDANCE_VIDEO_GENERATE_AUDIO",
+  );
 }
 
 function getTextToImageModel(editModel: string) {
@@ -175,6 +218,20 @@ async function atlasRequest<T>(pathname: string, init: RequestInit) {
   return payload as T;
 }
 
+function createAbortError(signal?: AbortSignal) {
+  if (signal?.reason instanceof Error) {
+    return signal.reason;
+  }
+
+  return new DOMException("The operation was aborted", "AbortError");
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) {
+    throw createAbortError(signal);
+  }
+}
+
 function extractOutputUrls(payload: AtlasGenerationResponse) {
   const rawOutputs = Array.isArray(payload.outputs)
     ? payload.outputs
@@ -234,7 +291,9 @@ function inferExtension(contentType: string | null, sourceUrl: string) {
   }
 }
 
-async function ensureRemoteReference(projectPath: string, reference: string) {
+async function ensureRemoteReference(projectPath: string, reference: string, signal?: AbortSignal) {
+  throwIfAborted(signal);
+
   if (/^https?:\/\//i.test(reference)) {
     return reference;
   }
@@ -251,6 +310,7 @@ async function ensureRemoteReference(projectPath: string, reference: string) {
   }>("/model/uploadMedia", {
     method: "POST",
     body: form,
+    signal,
   });
 
   const uploadedUrl =
@@ -267,7 +327,7 @@ async function ensureRemoteReference(projectPath: string, reference: string) {
   return uploadedUrl;
 }
 
-async function readPrediction(predictionId: string) {
+async function readPrediction(predictionId: string, signal?: AbortSignal) {
   const paths = [
     `/model/prediction/${encodeURIComponent(predictionId)}`,
     `/model/result/${encodeURIComponent(predictionId)}`,
@@ -276,7 +336,7 @@ async function readPrediction(predictionId: string) {
 
   for (const pathname of paths) {
     try {
-      return await atlasRequest<AtlasGenerationResponse>(pathname, { method: "GET" });
+      return await atlasRequest<AtlasGenerationResponse>(pathname, { method: "GET", signal });
     } catch (error) {
       if (error instanceof Error && /404/.test(error.message)) {
         lastError = error;
@@ -289,11 +349,31 @@ async function readPrediction(predictionId: string) {
   throw lastError ?? new Error("Prediction not found");
 }
 
-async function waitForGeneration(predictionId: string) {
+async function waitForSignalSafeDelay(delayMs: number, signal?: AbortSignal) {
+  throwIfAborted(signal);
+
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+
+    function onAbort() {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", onAbort);
+      reject(createAbortError(signal));
+    }
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function waitForGeneration(predictionId: string, signal?: AbortSignal) {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
-    const result = await readPrediction(predictionId);
+    throwIfAborted(signal);
+    const result = await readPrediction(predictionId, signal);
     const status = (result.status ?? "").toLowerCase();
 
     if (status === "succeeded" || status === "completed" || extractOutputUrls(result).length > 0) {
@@ -304,14 +384,21 @@ async function waitForGeneration(predictionId: string) {
       throw new Error(result.error ?? result.message ?? `Atlas generation ${status}`);
     }
 
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    await waitForSignalSafeDelay(POLL_INTERVAL_MS, signal);
   }
 
   throw new Error("Timed out waiting for Atlas generation");
 }
 
-async function persistGeneratedAsset(projectPath: string, relativeDir: string, fileStem: string, url: string) {
-  const response = await fetch(url);
+async function persistGeneratedAsset(
+  projectPath: string,
+  relativeDir: string,
+  fileStem: string,
+  url: string,
+  signal?: AbortSignal,
+) {
+  throwIfAborted(signal);
+  const response = await fetch(url, { signal });
   if (!response.ok) {
     throw new Error(`Failed to download generated asset: ${response.status}`);
   }
@@ -341,7 +428,7 @@ function buildResponsePayload(initial: AtlasGenerationResponse, settled: AtlasGe
 
 export async function generateFrameImages(input: GenerateFrameImageInput): Promise<GeneratedFrameAsset[]> {
   const referenceImages = await Promise.all(
-    input.referenceImages.map((reference) => ensureRemoteReference(input.projectPath, reference)),
+    input.referenceImages.map((reference) => ensureRemoteReference(input.projectPath, reference, input.signal)),
   );
   const editModel = getEditModel();
   const model = referenceImages.length > 0 ? editModel : getTextToImageModel(editModel);
@@ -369,6 +456,7 @@ export async function generateFrameImages(input: GenerateFrameImageInput): Promi
         "Content-Type": "application/json",
       },
       body: JSON.stringify(requestPayload),
+      signal: input.signal,
     });
 
     const immediateOutputs = extractOutputUrls(initial);
@@ -376,7 +464,7 @@ export async function generateFrameImages(input: GenerateFrameImageInput): Promi
     const settled = immediateOutputs.length > 0
       ? initial
       : predictionId
-        ? await waitForGeneration(predictionId)
+        ? await waitForGeneration(predictionId, input.signal)
         : (() => {
             throw new Error("Atlas did not return outputs or a prediction id");
           })();
@@ -391,6 +479,7 @@ export async function generateFrameImages(input: GenerateFrameImageInput): Promi
       path.join("frames", input.frameId),
       `${Date.now()}_${index + 1}`,
       outputUrl,
+      input.signal,
     );
 
     generatedAssets.push({
@@ -409,8 +498,8 @@ export async function generateTransitionVideo(
   input: GenerateTransitionVideoInput,
 ): Promise<GeneratedTransitionAsset> {
   const [fromImage, toImage] = await Promise.all([
-    ensureRemoteReference(input.projectPath, input.fromImagePath),
-    ensureRemoteReference(input.projectPath, input.toImagePath),
+    ensureRemoteReference(input.projectPath, input.fromImagePath, input.signal),
+    ensureRemoteReference(input.projectPath, input.toImagePath, input.signal),
   ]);
   const { width, height } = parseGenerationSize(input.size);
   const model = getVideoModel();
@@ -425,6 +514,8 @@ export async function generateTransitionVideo(
     aspect_ratio: getVideoAspectRatio(),
     duration: input.duration,
     fps: input.fps,
+    camera_fixed: input.cameraFixed ?? getVideoCameraFixed(),
+    generate_audio: input.generateAudio ?? getVideoGenerateAudio(),
   };
 
   const initial = await atlasRequest<AtlasGenerationResponse>("/model/generateVideo", {
@@ -433,6 +524,7 @@ export async function generateTransitionVideo(
       "Content-Type": "application/json",
     },
     body: JSON.stringify(requestPayload),
+    signal: input.signal,
   });
 
   const immediateOutputs = extractOutputUrls(initial);
@@ -440,7 +532,7 @@ export async function generateTransitionVideo(
   const settled = immediateOutputs.length > 0
     ? initial
     : predictionId
-      ? await waitForGeneration(predictionId)
+      ? await waitForGeneration(predictionId, input.signal)
       : (() => {
           throw new Error("Atlas did not return outputs or a prediction id");
         })();
@@ -455,6 +547,7 @@ export async function generateTransitionVideo(
     path.join("transitions", input.transitionId),
     `${Date.now()}_transition`,
     outputUrl,
+    input.signal,
   );
 
   return {

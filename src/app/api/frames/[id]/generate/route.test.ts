@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-const { enqueueFrameGenerationMock } = vi.hoisted(() => ({
+const { enqueueFrameGenerationMock, importFrameAssetsMock } = vi.hoisted(() => ({
   enqueueFrameGenerationMock: vi.fn(),
+  importFrameAssetsMock: vi.fn(),
 }));
 
 vi.mock("@/lib/job-runner", () => ({
   enqueueFrameGeneration: enqueueFrameGenerationMock,
+  importFrameAssets: importFrameAssetsMock,
 }));
 
 import { POST } from "./route";
@@ -13,6 +15,7 @@ import { POST } from "./route";
 describe("POST /api/frames/[id]/generate", () => {
   afterEach(() => {
     enqueueFrameGenerationMock.mockReset();
+    importFrameAssetsMock.mockReset();
   });
 
   test("passes explicit prompt and reference overrides into frame generation", async () => {
@@ -44,5 +47,26 @@ describe("POST /api/frames/[id]/generate", () => {
       size: "1024x576",
       seedMode: "locked",
     });
+  });
+
+  test("imports direct asset paths without queueing generation when prompt is empty", async () => {
+    importFrameAssetsMock.mockResolvedValue({ ok: true });
+
+    await POST(
+      new Request("http://localhost/api/frames/frame_123/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          directAssetPaths: ["frames/references/shot.png"],
+          usePreviousFrameAsReference: false,
+        }),
+      }),
+      { params: Promise.resolve({ id: "frame_123" }) },
+    );
+
+    expect(importFrameAssetsMock).toHaveBeenCalledWith("frame_123", ["frames/references/shot.png"], {
+      usePreviousFrameAsReference: false,
+    });
+    expect(enqueueFrameGenerationMock).not.toHaveBeenCalled();
   });
 });

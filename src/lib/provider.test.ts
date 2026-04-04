@@ -16,6 +16,8 @@ describe("provider transition generation", () => {
     vi.restoreAllMocks();
     delete process.env.ATLASCLOUD_API_KEY;
     delete process.env.ATLAS_API_KEY;
+    delete process.env.SEEDANCE_VIDEO_CAMERA_FIXED;
+    delete process.env.SEEDANCE_VIDEO_GENERATE_AUDIO;
   });
 
   test("parses atlas size strings", () => {
@@ -126,6 +128,66 @@ describe("provider transition generation", () => {
         status: "completed",
         outputs: ["https://cdn.example/transition.mp4"],
       },
+    });
+  });
+
+  test("sends camera_fixed and generate_audio flags to Seedance", async () => {
+    process.env.ATLASCLOUD_API_KEY = "test-key";
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "moviegen-provider-"));
+    const fromImagePath = path.join(tempDir, "frames", "frame-a", "approved.png");
+    const toImagePath = path.join(tempDir, "frames", "frame-b", "approved.png");
+
+    await fs.mkdir(path.dirname(fromImagePath), { recursive: true });
+    await fs.mkdir(path.dirname(toImagePath), { recursive: true });
+    await fs.writeFile(fromImagePath, "from-image");
+    await fs.writeFile(toImagePath, "to-image");
+
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input);
+
+      if (url === "https://api.atlascloud.ai/api/v1/model/uploadMedia") {
+        return jsonResponse({ data: { download_url: "https://cdn.example/frame.png" } });
+      }
+
+      if (url === "https://api.atlascloud.ai/api/v1/model/generateVideo") {
+        return jsonResponse({
+          data: {
+            outputs: ["https://cdn.example/transition.mp4"],
+          },
+        });
+      }
+
+      if (url === "https://cdn.example/transition.mp4") {
+        return new Response(Uint8Array.from([0, 1, 2, 3]), {
+          status: 200,
+          headers: { "Content-Type": "video/mp4" },
+        });
+      }
+
+      throw new Error(`Unexpected fetch request: ${url}`);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generateTransitionVideo({
+      projectPath: tempDir,
+      transitionId: "transition-1",
+      prompt: "Locked-off shot with no audio.",
+      fromImagePath,
+      toImagePath,
+      posterPath: path.join("frames", "frame-a", "approved.png"),
+      duration: 4,
+      size: "1280x720",
+      fps: 24,
+      cameraFixed: true,
+      generateAudio: false,
+    });
+
+    const generateVideoRequest = fetchMock.mock.calls[2];
+    expect(JSON.parse(String(generateVideoRequest?.[1]?.body))).toMatchObject({
+      camera_fixed: true,
+      generate_audio: false,
     });
   });
 });

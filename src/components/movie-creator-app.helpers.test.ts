@@ -8,6 +8,7 @@ import {
   getFrameRepairAction,
   getSequenceNextStep,
   getSequenceOverviewStats,
+  shouldSyncEditorDraft,
   getTransitionCardMeta,
   getTransitionDisplayPrompt,
   getTransitionGenerationDraft,
@@ -125,6 +126,26 @@ function createTransitionView(overrides: Partial<TransitionView> = {}): Transiti
 }
 
 describe("movie creator frame helpers", () => {
+  test("preserves the local editor draft while the same entry is dirty", () => {
+    expect(
+      shouldSyncEditorDraft({
+        isDirty: true,
+        currentEntryKey: "frame:frame_1",
+        nextEntryKey: "frame:frame_1",
+      }),
+    ).toBe(false);
+  });
+
+  test("resyncs the editor draft when selection changes to a different entry", () => {
+    expect(
+      shouldSyncEditorDraft({
+        isDirty: true,
+        currentEntryKey: "frame:frame_1",
+        nextEntryKey: "frame:frame_2",
+      }),
+    ).toBe(true);
+  });
+
   test("shows the prompt for the selected gallery generation", () => {
     const selectedVersion = createVersion("framever_selected", {
       sourcePrompt: "Selected gallery prompt",

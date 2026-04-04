@@ -30,6 +30,8 @@ describe("POST /api/transitions/bulk-generate", () => {
           duration: 5,
           size: "1024x576",
           fps: 30,
+          cameraFixed: true,
+          generateAudio: false,
         }),
       }),
     );
@@ -43,6 +45,8 @@ describe("POST /api/transitions/bulk-generate", () => {
       },
       size: "1024x576",
       fps: 30,
+      cameraFixed: true,
+      generateAudio: false,
     });
   });
 });

@@ -9,6 +9,7 @@ import {
   isFrameVersionCurrentForState,
   isTransitionVersionCurrentForState,
   nowIso,
+  reconcileTransitions,
 } from "@/lib/project-ops";
 import { mutateCurrentProject, mutateProject, readProjectSnapshot } from "@/lib/project-store";
 import { generateFrameImages, generateTransitionVideo } from "@/lib/provider";
@@ -40,6 +41,8 @@ type TransitionGenerationOptions = {
   duration: number;
   size: string;
   fps: number;
+  cameraFixed?: boolean;
+  generateAudio?: boolean;
   overridesByTransitionId?: Record<
     string,
     {
@@ -107,7 +110,10 @@ type PendingTransitionResolution =
 type JobRunnerState = {
   processingFrameProjects: Set<string>;
   processingTransitionProjects: Set<string>;
+  jobAbortControllers: Map<string, AbortController>;
 };
+
+const DIRECT_UPLOAD_MODEL = "uploaded/image";
 
 declare global {
   var __moviegenJobRunnerState__: JobRunnerState | undefined;
@@ -118,10 +124,25 @@ function getJobRunnerState(): JobRunnerState {
     global.__moviegenJobRunnerState__ = {
       processingFrameProjects: new Set(),
       processingTransitionProjects: new Set(),
+      jobAbortControllers: new Map(),
     };
   }
 
   return global.__moviegenJobRunnerState__;
+}
+
+function abortTrackedJobs(jobIds: string[]) {
+  const runnerState = getJobRunnerState();
+
+  for (const jobId of jobIds) {
+    const controller = runnerState.jobAbortControllers.get(jobId);
+    if (!controller) {
+      continue;
+    }
+
+    controller.abort(new Error("Generation stopped"));
+    runnerState.jobAbortControllers.delete(jobId);
+  }
 }
 
 function resolveFrameReferenceImages(
@@ -650,6 +671,9 @@ async function runQueuedFrameJobs(projectPath: string) {
         break;
       }
 
+      const abortController = new AbortController();
+      runnerState.jobAbortControllers.set(claimed.job.id, abortController);
+
       try {
         const [asset] = await generateFrameImages({
           projectPath,
@@ -663,6 +687,7 @@ async function runQueuedFrameJobs(projectPath: string) {
             typeof claimed.job.requestPayload.seed === "number"
               ? claimed.job.requestPayload.seed
               : undefined,
+          signal: abortController.signal,
         });
 
         if (!asset) {
@@ -686,6 +711,8 @@ async function runQueuedFrameJobs(projectPath: string) {
           claimed.job.id,
           error instanceof Error ? error.message : "Frame generation failed",
         );
+      } finally {
+        runnerState.jobAbortControllers.delete(claimed.job.id);
       }
     }
   } finally {
@@ -708,6 +735,9 @@ async function runQueuedTransitionJobs(projectPath: string) {
         break;
       }
 
+      const abortController = new AbortController();
+      runnerState.jobAbortControllers.set(claimed.job.id, abortController);
+
       try {
         const asset = await generateTransitionVideo({
           projectPath,
@@ -719,6 +749,15 @@ async function runQueuedTransitionJobs(projectPath: string) {
           duration: Number(claimed.job.requestPayload.duration ?? 4),
           size: String(claimed.job.requestPayload.size ?? "1280x720"),
           fps: Number(claimed.job.requestPayload.fps ?? 24),
+          cameraFixed:
+            typeof claimed.job.requestPayload.cameraFixed === "boolean"
+              ? claimed.job.requestPayload.cameraFixed
+              : undefined,
+          generateAudio:
+            typeof claimed.job.requestPayload.generateAudio === "boolean"
+              ? claimed.job.requestPayload.generateAudio
+              : undefined,
+          signal: abortController.signal,
         });
 
         await completeTransitionJob(
@@ -740,11 +779,114 @@ async function runQueuedTransitionJobs(projectPath: string) {
           claimed.job.id,
           error instanceof Error ? error.message : "Transition generation failed",
         );
+      } finally {
+        runnerState.jobAbortControllers.delete(claimed.job.id);
       }
     }
   } finally {
     runnerState.processingTransitionProjects.delete(projectPath);
   }
+}
+
+export async function importFrameAssets(
+  frameId: string,
+  assetPaths: string[],
+  options?: { usePreviousFrameAsReference?: boolean },
+): Promise<ProjectSnapshot> {
+  if (assetPaths.length === 0) {
+    throw new Error("No assets selected");
+  }
+
+  const { snapshot } = await mutateCurrentProject((manifest) => {
+    const frame = manifest.frames.find((item) => item.id === frameId);
+    if (!frame) {
+      throw new Error("Frame not found");
+    }
+
+    const timestamp = nowIso();
+    const usePreviousFrameAsReference =
+      (options?.usePreviousFrameAsReference ?? frame.usePreviousFrameAsReference) && frame.position > 0;
+    const orderedFrames = [...manifest.frames].sort((left, right) => left.position - right.position);
+    const frameIndex = orderedFrames.findIndex((item) => item.id === frame.id);
+    const previousFrameId = frameIndex > 0 ? orderedFrames[frameIndex - 1]?.id ?? null : null;
+    const previousCurrentVersionId = previousFrameId
+      ? getCurrentFrameVersionIdForManifest(manifest, previousFrameId)
+      : null;
+
+    if (options?.usePreviousFrameAsReference !== undefined) {
+      frame.usePreviousFrameAsReference = usePreviousFrameAsReference;
+    }
+
+    for (const relativePath of assetPaths) {
+      const assetTimestamp = nowIso();
+      const versionId = createId("framever");
+      const jobId = createId("job");
+      const inputPayload = {
+        mode: "direct_upload",
+        directAssetPath: relativePath,
+      } satisfies Record<string, unknown>;
+
+      manifest.jobs.push({
+        id: jobId,
+        kind: "frame_image",
+        targetId: versionId,
+        targetParentId: frame.id,
+        provider: "mock",
+        model: DIRECT_UPLOAD_MODEL,
+        status: "completed",
+        requestPayload: inputPayload,
+        providerPredictionId: null,
+        errorMessage: null,
+        startedAt: assetTimestamp,
+        completedAt: assetTimestamp,
+        createdAt: assetTimestamp,
+        updatedAt: assetTimestamp,
+      });
+
+      const version: FrameVersion = {
+        id: versionId,
+        model: DIRECT_UPLOAD_MODEL,
+        inputPayload,
+        responsePayload: {
+          type: "direct_upload",
+          path: relativePath,
+        },
+        outputPath: relativePath,
+        thumbnailPath: relativePath,
+        generationJobId: jobId,
+        createdAt: assetTimestamp,
+        reviewerDecision: "unreviewed",
+        reviewerNotes: "",
+        sourcePrompt: null,
+        usePreviousFrameAsReference,
+        dependencyFrameId: null,
+        dependencyVersionId: null,
+      };
+
+      frame.versions.push(version);
+
+      const shouldSelectImportedVersion = isFrameVersionCurrentForState(
+        frame,
+        version,
+        previousCurrentVersionId,
+      );
+
+      if (shouldSelectImportedVersion) {
+        frame.approvedVersionId = versionId;
+        version.reviewerDecision = "approved";
+        for (const sibling of frame.versions) {
+          if (sibling.id !== versionId && sibling.reviewerDecision === "approved") {
+            sibling.reviewerDecision = "rejected";
+          }
+        }
+      }
+    }
+
+    frame.updatedAt = timestamp;
+    reconcileTransitions(manifest);
+  });
+
+  return snapshot;
 }
 
 function buildQueuedFrameJobs(
@@ -792,6 +934,24 @@ function buildQueuedTransitionJob(
   prompt: string,
 ): GenerationJob {
   const timestamp = nowIso();
+  const requestPayload: Record<string, unknown> = {
+    transitionId: transition.id,
+    prompt,
+    promptRevision: transition.promptRevision,
+    fromApprovedVersionId: transition.confirmedFromVersionId,
+    toApprovedVersionId: transition.confirmedToVersionId,
+    duration: options.duration,
+    size: options.size,
+    fps: options.fps,
+  };
+
+  if (typeof options.cameraFixed === "boolean") {
+    requestPayload.cameraFixed = options.cameraFixed;
+  }
+
+  if (typeof options.generateAudio === "boolean") {
+    requestPayload.generateAudio = options.generateAudio;
+  }
 
   return {
     id: createId("job"),
@@ -801,16 +961,7 @@ function buildQueuedTransitionJob(
     provider: "atlas",
     model: VIDEO_MODEL,
     status: "queued",
-    requestPayload: {
-      transitionId: transition.id,
-      prompt,
-      promptRevision: transition.promptRevision,
-      fromApprovedVersionId: transition.confirmedFromVersionId,
-      toApprovedVersionId: transition.confirmedToVersionId,
-      duration: options.duration,
-      size: options.size,
-      fps: options.fps,
-    },
+    requestPayload,
     providerPredictionId: null,
     errorMessage: null,
     startedAt: null,
@@ -936,6 +1087,47 @@ export async function enqueueProjectStartupGeneration(input: {
   });
 
   void runQueuedFrameJobs(projectPath);
+  void runQueuedTransitionJobs(projectPath);
+  return snapshot;
+}
+
+export async function cancelFrameGeneration(frameId: string): Promise<ProjectSnapshot> {
+  const { snapshot, result, projectPath } = await mutateCurrentProject((manifest) => {
+    const canceledJobIds = manifest.jobs
+      .filter(
+        (job) =>
+          job.kind === "frame_image" &&
+          job.targetParentId === frameId &&
+          (job.status === "queued" || job.status === "running"),
+      )
+      .map((job) => job.id);
+
+    manifest.jobs = manifest.jobs.filter((job) => !canceledJobIds.includes(job.id));
+    return canceledJobIds;
+  });
+
+  abortTrackedJobs(result);
+  void runQueuedFrameJobs(projectPath);
+  void runQueuedTransitionJobs(projectPath);
+  return snapshot;
+}
+
+export async function cancelTransitionGeneration(transitionId: string): Promise<ProjectSnapshot> {
+  const { snapshot, result, projectPath } = await mutateCurrentProject((manifest) => {
+    const canceledJobIds = manifest.jobs
+      .filter(
+        (job) =>
+          job.kind === "transition_video" &&
+          job.targetParentId === transitionId &&
+          (job.status === "queued" || job.status === "running"),
+      )
+      .map((job) => job.id);
+
+    manifest.jobs = manifest.jobs.filter((job) => !canceledJobIds.includes(job.id));
+    return canceledJobIds;
+  });
+
+  abortTrackedJobs(result);
   void runQueuedTransitionJobs(projectPath);
   return snapshot;
 }

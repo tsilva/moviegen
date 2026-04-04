@@ -7,6 +7,8 @@ const requestSchema = z.object({
   duration: z.number().min(1).max(12).optional(),
   size: z.string().optional(),
   fps: z.number().int().min(8).max(60).optional(),
+  cameraFixed: z.boolean().optional(),
+  generateAudio: z.boolean().optional(),
   promptsByTransitionId: z.record(z.string(), z.string()).optional(),
 });
 
@@ -25,6 +27,8 @@ export async function POST(request: Request) {
         : undefined,
       size: body.size ?? "1280x720",
       fps: body.fps ?? 24,
+      cameraFixed: body.cameraFixed,
+      generateAudio: body.generateAudio,
     });
     return ok(snapshot);
   } catch (error) {

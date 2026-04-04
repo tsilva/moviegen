@@ -109,6 +109,14 @@ export function getTransitionGenerationDraft(transition: TransitionView, selecte
   };
 }
 
+export function shouldSyncEditorDraft(input: {
+  isDirty: boolean;
+  currentEntryKey: string | null;
+  nextEntryKey: string;
+}) {
+  return !input.isDirty || input.currentEntryKey !== input.nextEntryKey;
+}
+
 export function buildBulkFrameRows(promptInput: string, referenceImagePaths: string[]) {
   const prompts = promptInput
     .split("\n")
