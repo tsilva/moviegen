@@ -6,6 +6,8 @@ const DEFAULT_OUTPUT_RELATIVE_PATH = path.join("final", "final-video.mp4");
 const DEFAULT_FRAME_RATE = 24;
 const DEFAULT_VIDEO_DIMENSION = 720;
 const DEFAULT_AUDIO_SAMPLE_RATE = 48_000;
+const BOUNDARY_TRIM_START_FRAMES = 2;
+const BOUNDARY_TRIM_END_FRAMES = 2;
 
 type GenerateFinalVideoInput = {
   projectPath: string;
@@ -53,9 +55,29 @@ function parseFrameRate(value: unknown) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_FRAME_RATE;
 }
 
-function formatFilterDuration(durationSeconds: number) {
-  const safeDuration = Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : 0.001;
+function formatFilterDuration(durationSeconds: number, minimumSeconds = 0.001) {
+  const safeDuration = Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : minimumSeconds;
   return safeDuration.toFixed(3);
+}
+
+function getBoundaryTrimStartSeconds(index: number, frameRate: number, durationSeconds: number) {
+  if (index === 0) {
+    return 0;
+  }
+
+  const overlapSeconds = BOUNDARY_TRIM_START_FRAMES / frameRate;
+  const maxAllowedTrim = Math.max(durationSeconds - 0.001, 0);
+  return Math.min(overlapSeconds, maxAllowedTrim);
+}
+
+function getBoundaryTrimEndSeconds(index: number, totalClips: number, frameRate: number, durationSeconds: number) {
+  if (index >= totalClips - 1) {
+    return 0;
+  }
+
+  const overlapSeconds = BOUNDARY_TRIM_END_FRAMES / frameRate;
+  const maxAllowedTrim = Math.max(durationSeconds - 0.001, 0);
+  return Math.min(overlapSeconds, maxAllowedTrim);
 }
 
 function getProbeBinary() {
@@ -153,8 +175,14 @@ export async function generateFinalVideo({
   await fs.mkdir(path.dirname(outputAbsolutePath), { recursive: true });
 
   const filterSegments = clipInfo.flatMap((info, index) => {
+    const trimEndSeconds = getBoundaryTrimEndSeconds(index, clipInfo.length, frameRate, info.durationSeconds);
+    const trimStartSeconds = getBoundaryTrimStartSeconds(index, frameRate, info.durationSeconds);
+    const trimmedDurationSeconds = Math.max(info.durationSeconds - trimStartSeconds - trimEndSeconds, 0.001);
+    const trimEndTimestampSeconds = trimStartSeconds + trimmedDurationSeconds;
     const normalizedVideo =
       `[${index}:v:0]` +
+      `trim=start=${formatFilterDuration(trimStartSeconds, 0)}:end=${formatFilterDuration(trimEndTimestampSeconds)},` +
+      "setpts=PTS-STARTPTS," +
       `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
       `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,` +
       `fps=${frameRate},` +
@@ -165,9 +193,10 @@ export async function generateFinalVideo({
       ? `[${index}:a:0]` +
         `aresample=${DEFAULT_AUDIO_SAMPLE_RATE},` +
         `aformat=sample_rates=${DEFAULT_AUDIO_SAMPLE_RATE}:channel_layouts=stereo,` +
+        `atrim=start=${formatFilterDuration(trimStartSeconds, 0)}:end=${formatFilterDuration(trimEndTimestampSeconds)},` +
         `asetpts=N/SR/TB[a${index}]`
       : `anullsrc=r=${DEFAULT_AUDIO_SAMPLE_RATE}:cl=stereo,` +
-        `atrim=duration=${formatFilterDuration(info.durationSeconds)},` +
+        `atrim=duration=${formatFilterDuration(trimmedDurationSeconds)},` +
         `asetpts=N/SR/TB[a${index}]`;
 
     return [normalizedVideo, normalizedAudio];

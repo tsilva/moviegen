@@ -23,7 +23,7 @@ describe("generateFinalVideo", () => {
     await Promise.all(tempDirs.splice(0).map((tempDir) => fs.rm(tempDir, { recursive: true, force: true })));
   });
 
-  test("builds a normalized ffmpeg concat command and fills missing audio with silence", async () => {
+  test("builds a normalized ffmpeg concat command and trims boundary overlap at both clip joins", async () => {
     const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "moviegen-final-video-"));
     tempDirs.push(projectPath);
 
@@ -65,11 +65,13 @@ describe("generateFinalVideo", () => {
         expect(filterIndex).toBeGreaterThan(-1);
 
         const filter = String(args[filterIndex + 1]);
-        expect(filter).toContain("[0:v:0]scale=1280:720");
+        expect(filter).toContain("[0:v:0]trim=start=0.000:end=2.417,setpts=PTS-STARTPTS,scale=1280:720");
+        expect(filter).toContain("[1:v:0]trim=start=0.083:end=3.250,setpts=PTS-STARTPTS,scale=1280:720");
         expect(filter).toContain("scale=1280:720:force_original_aspect_ratio=decrease");
         expect(filter).toContain("fps=24");
         expect(filter).toContain("anullsrc=r=48000:cl=stereo");
-        expect(filter).toContain("atrim=duration=3.250");
+        expect(filter).toContain("atrim=duration=3.167");
+        expect(filter).toContain("atrim=start=0.000:end=2.417");
         expect(filter).toContain("asetpts=N/SR/TB[a1]");
         expect(filter).toContain("concat=n=2:v=1:a=1");
 
