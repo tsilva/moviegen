@@ -12,11 +12,14 @@ import {
   reconcileTransitions,
 } from "@/lib/project-ops";
 import {
+  getVideoDurationDefaultSeconds,
+} from "@/lib/generation-defaults";
+import {
   getProjectDefaultModelId,
   normalizeGenerationOverrides,
   resolveGenerationConfig,
 } from "@/lib/generation-config";
-import { getFrameSizeFromSettings, getTransitionSizeFromSettings } from "@/lib/generation-models";
+import { getFrameSizeFromSettings, getTransitionDurationFromSettings, getTransitionSizeFromSettings } from "@/lib/generation-models";
 import { mutateCurrentProject, mutateProject, readProjectSnapshot } from "@/lib/project-store";
 import { generateFrameImages, generateTransitionVideo } from "@/lib/provider";
 import type {
@@ -789,7 +792,7 @@ async function runQueuedTransitionJobs(projectPath: string) {
           fromImagePath: claimed.fromImagePath,
           toImagePath: claimed.toImagePath,
           posterPath: claimed.posterPath,
-          duration: Number(claimed.job.requestPayload.duration ?? 4),
+          duration: Number(claimed.job.requestPayload.duration ?? getVideoDurationDefaultSeconds()),
           size: String(claimed.job.requestPayload.size ?? "1280x720"),
           fps: Number(claimed.job.requestPayload.fps ?? 24),
           settings: claimed.generationSnapshot.settings,
@@ -978,6 +981,7 @@ function buildQueuedTransitionJob(
 ): GenerationJob {
   const timestamp = nowIso();
   const size = getTransitionSizeFromSettings(generationSnapshot.settings, options.size);
+  const duration = getTransitionDurationFromSettings(generationSnapshot.settings, options.duration);
   const requestPayload: Record<string, unknown> = {
     transitionId: transition.id,
     prompt: sourcePrompt,
@@ -985,7 +989,7 @@ function buildQueuedTransitionJob(
     promptRevision: transition.promptRevision,
     fromApprovedVersionId: transition.confirmedFromVersionId,
     toApprovedVersionId: transition.confirmedToVersionId,
-    duration: options.duration,
+    duration,
     size,
     fps: options.fps,
   };

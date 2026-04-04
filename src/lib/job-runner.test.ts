@@ -1145,6 +1145,7 @@ describe("frame job anchoring", () => {
       first.approvedVersionId = firstVersion.id;
       second.approvedVersionId = secondVersion.id;
       draft.frames = [first, second];
+      draft.generationDefaults.byModel["bytedance/seedance-v1.5-pro/image-to-video"]!.settings.duration = "8";
       reconcileTransitions(draft);
       draft.transitions[0]!.transitionPrompt = "Match cut";
       draft.transitions[0]!.invalidationReason = "endpoint_versions_changed";
@@ -1170,6 +1171,7 @@ describe("frame job anchoring", () => {
       prompt: "Match cut",
       fromApprovedVersionId: manifest.frames[0]!.approvedVersionId,
       toApprovedVersionId: manifest.frames[1]!.approvedVersionId,
+      duration: 8,
       cameraFixed: true,
       generateAudio: false,
     });
@@ -1186,8 +1188,10 @@ describe("frame job anchoring", () => {
         toImagePath: toOutputPath,
         modelId: "bytedance/seedance-v1.5-pro/image-to-video",
         prompt: "Match cut",
+        duration: 8,
         settings: expect.objectContaining({
           cameraFixed: true,
+          duration: "8",
           generateAudio: false,
         }),
       }),

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { failure, ok } from "@/lib/http";
+import { getVideoDurationDefaultSeconds } from "@/lib/generation-defaults";
 import { enqueueFrameGeneration, enqueueProjectStartupGeneration } from "@/lib/job-runner";
 import { createId, nowIso, reconcileTransitions } from "@/lib/project-ops";
 import { mutateCurrentProject } from "@/lib/project-store";
@@ -78,7 +79,7 @@ export async function POST(request: Request) {
           seedMode: "random",
         },
         transitionOptions: {
-          duration: 4,
+          duration: getVideoDurationDefaultSeconds(),
           size: "1280x720",
           fps: 24,
         },

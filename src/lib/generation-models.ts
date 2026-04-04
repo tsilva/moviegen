@@ -48,6 +48,13 @@ export const TRANSITION_ASPECT_RATIO_OPTIONS = [
   { value: "21:9", label: "21:9" },
 ] as const;
 
+export const TRANSITION_DURATION_SECONDS = [4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
+
+export const TRANSITION_DURATION_OPTIONS = TRANSITION_DURATION_SECONDS.map((value) => ({
+  value: String(value),
+  label: `${value} sec`,
+})) as readonly GenerationSettingOption[];
+
 export const MODEL_REGISTRY: Record<string, GenerationModelDefinition> = {
   [PRO_FRAME_MODEL_ID]: {
     id: PRO_FRAME_MODEL_ID,
@@ -87,6 +94,13 @@ export const MODEL_REGISTRY: Record<string, GenerationModelDefinition> = {
         kind: "select",
         defaultValue: "1:1",
         options: TRANSITION_ASPECT_RATIO_OPTIONS,
+      },
+      {
+        key: "duration",
+        label: "Duration",
+        kind: "select",
+        defaultValue: "4",
+        options: TRANSITION_DURATION_OPTIONS,
       },
       {
         key: "cameraFixed",
@@ -189,4 +203,13 @@ export function getFrameSizeFromSettings(settings: GenerationSettings, fallbackS
   };
 
   return sizesByResolution[resolution] ?? fallbackSize;
+}
+
+export function isTransitionDurationSeconds(value: number): value is (typeof TRANSITION_DURATION_SECONDS)[number] {
+  return TRANSITION_DURATION_SECONDS.includes(value as (typeof TRANSITION_DURATION_SECONDS)[number]);
+}
+
+export function getTransitionDurationFromSettings(settings: GenerationSettings, fallbackDuration: number) {
+  const duration = typeof settings.duration === "string" ? Number(settings.duration) : Number.NaN;
+  return isTransitionDurationSeconds(duration) ? duration : fallbackDuration;
 }

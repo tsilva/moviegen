@@ -317,6 +317,7 @@ describe("movie creator transition helpers", () => {
       settings: {
         aspectRatio: "1:1",
         cameraFixed: true,
+        duration: "4",
         generateAudio: true,
         resolution: "480p",
       },

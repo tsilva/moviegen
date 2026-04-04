@@ -4,10 +4,12 @@ import {
   DEFAULT_SYSTEM_PROMPT_TEMPLATE,
   DEFAULT_TRANSITION_MODEL_ID,
   getModelDefaultSettings,
+  isTransitionDurationSeconds,
 } from "@/lib/generation-models";
 
 const DEFAULT_VIDEO_RESOLUTION = "480p";
 const DEFAULT_VIDEO_ASPECT_RATIO = "1:1";
+const DEFAULT_VIDEO_DURATION = "4";
 const DEFAULT_VIDEO_CAMERA_FIXED = true;
 const DEFAULT_VIDEO_GENERATE_AUDIO = true;
 
@@ -38,6 +40,20 @@ export function getVideoResolutionDefault() {
 
 export function getVideoAspectRatioDefault() {
   return process.env.SEEDANCE_VIDEO_ASPECT_RATIO ?? DEFAULT_VIDEO_ASPECT_RATIO;
+}
+
+export function getVideoDurationDefault() {
+  const value = process.env.SEEDANCE_VIDEO_DURATION ?? DEFAULT_VIDEO_DURATION;
+  const duration = Number(value);
+  if (!Number.isInteger(duration) || !isTransitionDurationSeconds(duration)) {
+    throw new Error(`Invalid value for SEEDANCE_VIDEO_DURATION: ${value}`);
+  }
+
+  return String(duration);
+}
+
+export function getVideoDurationDefaultSeconds() {
+  return Number(getVideoDurationDefault());
 }
 
 export function getVideoCameraFixedDefault() {
@@ -73,6 +89,7 @@ export function createDefaultGenerationDefaults(): ProjectGenerationDefaults {
           ...getModelDefaultSettings(DEFAULT_TRANSITION_MODEL_ID),
           resolution: getVideoResolutionDefault(),
           aspectRatio: getVideoAspectRatioDefault(),
+          duration: getVideoDurationDefault(),
           cameraFixed: getVideoCameraFixedDefault(),
           generateAudio: getVideoGenerateAudioDefault(),
         },

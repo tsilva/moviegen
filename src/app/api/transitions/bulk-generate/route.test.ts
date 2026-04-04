@@ -41,6 +41,11 @@ describe("POST /api/transitions/bulk-generate", () => {
       overridesByTransitionId: {
         transition_123: {
           prompt: "Whip pan into the next shot",
+          generationOverrides: {
+            settings: {
+              duration: "5",
+            },
+          },
         },
       },
       size: "1024x576",

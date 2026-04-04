@@ -1,10 +1,14 @@
 import { z } from "zod";
 import { failure, ok } from "@/lib/http";
 import { enqueueTransitionGeneration } from "@/lib/job-runner";
+import { getVideoDurationDefaultSeconds } from "@/lib/generation-defaults";
+import { isTransitionDurationSeconds } from "@/lib/generation-models";
 
 const requestSchema = z.object({
   transitionIds: z.array(z.string()),
-  duration: z.number().min(1).max(12).optional(),
+  duration: z.number().int().refine(isTransitionDurationSeconds, {
+    message: "Duration must be one of 4, 5, 6, 7, 8, 9, 10, 11, or 12 seconds",
+  }).optional(),
   size: z.string().optional(),
   fps: z.number().int().min(8).max(60).optional(),
   cameraFixed: z.boolean().optional(),
@@ -25,20 +29,29 @@ const requestSchema = z.object({
 export async function POST(request: Request) {
   try {
     const body = requestSchema.parse(await request.json());
-    const snapshot = await enqueueTransitionGeneration(body.transitionIds, {
-      duration: body.duration ?? 4,
-      overridesByTransitionId: body.promptsByTransitionId
-        || body.generationOverridesByTransitionId
+    const overridesByTransitionId =
+      body.duration !== undefined || body.promptsByTransitionId || body.generationOverridesByTransitionId
         ? Object.fromEntries(
             body.transitionIds.map((transitionId) => [
               transitionId,
               {
                 prompt: body.promptsByTransitionId?.[transitionId],
-                generationOverrides: body.generationOverridesByTransitionId?.[transitionId],
+                generationOverrides: body.duration !== undefined || body.generationOverridesByTransitionId?.[transitionId]
+                  ? {
+                      ...(body.generationOverridesByTransitionId?.[transitionId] ?? {}),
+                      settings: {
+                        ...(body.duration !== undefined ? { duration: String(body.duration) } : {}),
+                        ...(body.generationOverridesByTransitionId?.[transitionId]?.settings ?? {}),
+                      },
+                    }
+                  : undefined,
               },
             ]),
           )
-        : undefined,
+        : undefined;
+    const snapshot = await enqueueTransitionGeneration(body.transitionIds, {
+      duration: body.duration ?? getVideoDurationDefaultSeconds(),
+      overridesByTransitionId,
       size: body.size ?? "1280x720",
       fps: body.fps ?? 24,
       cameraFixed: body.cameraFixed,
