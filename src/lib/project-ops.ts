@@ -9,6 +9,9 @@ import type {
   ProjectManifest,
   ProjectSnapshot,
   ReorderImpactSummary,
+  TrackSlotSelection,
+  TrackSlotView,
+  TrackView,
   Transition,
   TransitionNextAction,
   TransitionPromptStatus,
@@ -32,8 +35,7 @@ export function createDefaultUiState(): PersistedUiState {
   return {
     themeMode: "dark",
     viewMode: "sequence",
-    selectedFrameId: null,
-    selectedTransitionId: null,
+    selectedSlot: null,
     filter: "needsRepair",
   };
 }
@@ -92,18 +94,10 @@ function frameVersionMatchesCurrentState(
   version: FrameVersion,
   previousCurrentVersionId: string | null,
 ) {
-  if (version.sourcePrompt != null && version.sourcePrompt !== frame.imagePrompt) {
-    return false;
-  }
+  const usesPreviousFrameAsReference =
+    version.usePreviousFrameAsReference ?? version.dependencyVersionId != null;
 
-  if (
-    version.usePreviousFrameAsReference != null &&
-    version.usePreviousFrameAsReference !== frame.usePreviousFrameAsReference
-  ) {
-    return false;
-  }
-
-  if (!frame.usePreviousFrameAsReference || frame.position === 0) {
+  if (!usesPreviousFrameAsReference || frame.position === 0) {
     return true;
   }
 
@@ -112,6 +106,17 @@ function frameVersionMatchesCurrentState(
   }
 
   return version.dependencyVersionId == null || version.dependencyVersionId === previousCurrentVersionId;
+}
+
+function getEffectiveFrameReferenceMode(
+  frame: Frame,
+  currentVersion: FrameVersion | null,
+) {
+  if (currentVersion) {
+    return currentVersion.usePreviousFrameAsReference ?? currentVersion.dependencyVersionId != null;
+  }
+
+  return frame.usePreviousFrameAsReference;
 }
 
 export function isFrameVersionCurrentForState(
@@ -150,8 +155,12 @@ function getCurrentFrameVersion(
   return null;
 }
 
-function isFrameBlockedByUpstream(frame: Frame, previousFrame: FrameView | null) {
-  if (!frame.usePreviousFrameAsReference || frame.position === 0 || !previousFrame) {
+function isFrameBlockedByUpstream(
+  frame: Frame,
+  previousFrame: FrameView | null,
+  dependsOnPreviousFrame: boolean,
+) {
+  if (!dependsOnPreviousFrame || frame.position === 0 || !previousFrame) {
     return false;
   }
 
@@ -203,9 +212,9 @@ export function deriveFrameStatus(input: {
   return "generated_unreviewed";
 }
 
-export function deriveFrameNextAction(status: FrameStatus): FrameNextAction {
+export function deriveFrameNextAction(frame: Frame, status: FrameStatus): FrameNextAction {
   if (status === "draft" || status === "stale_dependency" || status === "error") {
-    return "generate";
+    return frame.imagePrompt.trim().length === 0 ? "write_prompt" : "generate";
   }
 
   return null;
@@ -221,6 +230,276 @@ export function deriveFrameDisabledReason(frame: FrameView) {
   }
 
   return null;
+}
+
+function getFramePrompt(frame: FrameView) {
+  return frame.currentVersion?.sourcePrompt ?? frame.latestVersion?.sourcePrompt ?? frame.imagePrompt ?? "";
+}
+
+function getTransitionPrompt(transition: TransitionView) {
+  return (
+    transition.currentVideo?.sourcePrompt ??
+    transition.latestVideoVersion?.sourcePrompt ??
+    transition.transitionPrompt ??
+    ""
+  );
+}
+
+function getFrameStatusMeta(frame: FrameView) {
+  if (frame.nextAction === "write_prompt") {
+    return {
+      statusLabel: "Add Prompt",
+      statusColor: "orange" as const,
+      summary: "Add a prompt to make this frame generatable.",
+    };
+  }
+
+  if (frame.status === "blocked_upstream") {
+    return {
+      statusLabel: "Blocked",
+      statusColor: "gray" as const,
+      summary: "An upstream frame must be repaired first.",
+    };
+  }
+
+  if (frame.status === "stale_dependency") {
+    return {
+      statusLabel: "Stale",
+      statusColor: "orange" as const,
+      summary: "The current asset no longer matches the active dependency chain.",
+    };
+  }
+
+  if (frame.status === "queued" || frame.status === "generating") {
+    return {
+      statusLabel: frame.status === "queued" ? "Queued" : "Generating",
+      statusColor: "blue" as const,
+      summary: "A fresh candidate is already being generated.",
+    };
+  }
+
+  if (frame.status === "generated_unreviewed") {
+    return {
+      statusLabel: "Review",
+      statusColor: "cyan" as const,
+      summary: frame.hasCurrentApproval
+        ? "A newer compatible alternate is available."
+        : "A compatible current candidate is waiting for review.",
+    };
+  }
+
+  if (frame.status === "error") {
+    return {
+      statusLabel: "Error",
+      statusColor: "red" as const,
+      summary: "The last generation attempt failed.",
+    };
+  }
+
+  if (frame.nextAction === "generate") {
+    return {
+      statusLabel: "Generate",
+      statusColor: "cyan" as const,
+      summary: "Dependencies are resolved and this frame is ready to regenerate.",
+    };
+  }
+
+  return {
+    statusLabel: "Current",
+    statusColor: "teal" as const,
+    summary: "This frame is current for the active sequence state.",
+  };
+}
+
+function getTransitionStatusMeta(transition: TransitionView) {
+  if (transition.blockedByFrameIds.length > 0) {
+    return {
+      statusLabel: "Blocked",
+      statusColor: "gray" as const,
+      summary: "Adjacent frames must be repaired before this clip can update.",
+    };
+  }
+
+  if (transition.videoStatus === "stale" || transition.videoStatus === "not_ready") {
+    return {
+      statusLabel: transition.transitionPrompt.trim() ? "Generate" : "Add Asset",
+      statusColor: "cyan" as const,
+      summary: transition.transitionPrompt.trim()
+        ? "The current frame pair is ready for a fresh clip."
+        : "Add or generate a compatible clip for this cut.",
+    };
+  }
+
+  if (transition.videoStatus === "queued" || transition.videoStatus === "generating") {
+    return {
+      statusLabel: transition.videoStatus === "queued" ? "Queued" : "Generating",
+      statusColor: "blue" as const,
+      summary: "A clip is already being generated for this transition.",
+    };
+  }
+
+  if (transition.videoStatus === "generated_unreviewed") {
+    return {
+      statusLabel: "Review",
+      statusColor: "cyan" as const,
+      summary: transition.hasCurrentApproval
+        ? "A newer compatible alternate clip is available."
+        : "A compatible current clip is waiting for review.",
+    };
+  }
+
+  if (transition.videoStatus === "error") {
+    return {
+      statusLabel: "Error",
+      statusColor: "red" as const,
+      summary: "The last clip generation failed.",
+    };
+  }
+
+  return {
+    statusLabel: "Current",
+    statusColor: "teal" as const,
+    summary: "This clip is current for the active cut.",
+  };
+}
+
+function buildTrackFrameSlotView(
+  trackId: string,
+  slotKind: "startFrame" | "endFrame",
+  frame: FrameView,
+): TrackSlotView {
+  const prompt = getFramePrompt(frame);
+  const meta = getFrameStatusMeta(frame);
+  const preview = frame.currentVersion ?? frame.approvedVersion ?? frame.latestVersion;
+  const isBlocked = frame.status === "blocked_upstream";
+  const isStale = frame.status === "stale_dependency" || isBlocked;
+
+  return {
+    trackId,
+    slotKind,
+    entryKind: "frame",
+    entryId: frame.id,
+    label: `Frame ${frame.position + 1}`,
+    prompt: prompt.trim() || "No frame prompt yet",
+    promptPlaceholder: prompt.trim().length === 0,
+    statusLabel: meta.statusLabel,
+    statusColor: meta.statusColor,
+    summary: meta.summary,
+    previewPath: preview?.thumbnailPath ?? null,
+    zoomPath: preview?.outputPath ?? null,
+    posterPath: null,
+    isStale,
+    isBlocked,
+    canGenerate: !isBlocked && frame.nextAction === "generate",
+    disabledReason: frame.disabledReason,
+    candidateCount: frame.galleryVersions.length,
+  };
+}
+
+function buildTrackTransitionSlotView(trackId: string, transition: TransitionView): TrackSlotView {
+  const prompt = getTransitionPrompt(transition);
+  const meta = getTransitionStatusMeta(transition);
+  const preview = transition.currentVideo ?? transition.approvedVideoVersion ?? transition.latestVideoVersion;
+  const isBlocked = transition.blockedByFrameIds.length > 0;
+  const isStale =
+    transition.videoStatus === "stale" ||
+    transition.promptStatus === "needs_confirmation" ||
+    isBlocked;
+
+  return {
+    trackId,
+    slotKind: "transition",
+    entryKind: "transition",
+    entryId: transition.id,
+    label: `Transition ${transition.fromFrame.position + 1} -> ${transition.toFrame.position + 1}`,
+    prompt: prompt.trim() || "No transition prompt yet",
+    promptPlaceholder: prompt.trim().length === 0,
+    statusLabel: meta.statusLabel,
+    statusColor: meta.statusColor,
+    summary: meta.summary,
+    previewPath: preview?.posterPath ?? null,
+    zoomPath: preview?.outputPath ?? null,
+    posterPath: preview?.posterPath ?? null,
+    isStale,
+    isBlocked,
+    canGenerate: !isBlocked && transition.nextAction === "generate",
+    disabledReason: transition.disabledReason,
+    candidateCount: transition.galleryVersions.length,
+  };
+}
+
+function buildTrackViews(transitions: TransitionView[]): TrackView[] {
+  return transitions.map((transition, index) => {
+    const trackId = transition.id;
+    return {
+      id: trackId,
+      index,
+      transitionId: transition.id,
+      startFrame: transition.fromFrame,
+      transition,
+      endFrame: transition.toFrame,
+      slots: {
+        startFrame: buildTrackFrameSlotView(trackId, "startFrame", transition.fromFrame),
+        transition: buildTrackTransitionSlotView(trackId, transition),
+        endFrame: buildTrackFrameSlotView(trackId, "endFrame", transition.toFrame),
+      },
+    };
+  });
+}
+
+function resolveTrackSelection(
+  manifest: ProjectManifest,
+  tracks: TrackView[],
+): TrackSlotSelection | null {
+  if (tracks.length === 0) {
+    return null;
+  }
+
+  const existing = manifest.ui.selectedSlot;
+  if (
+    existing &&
+    tracks.some((track) => track.id === existing.trackId && existing.slotKind in track.slots)
+  ) {
+    return existing;
+  }
+
+  const legacyUi = manifest.ui as PersistedUiState & {
+    selectedFrameId?: string | null;
+    selectedTransitionId?: string | null;
+  };
+
+  if (legacyUi.selectedTransitionId) {
+    const match = tracks.find((track) => track.transition.id === legacyUi.selectedTransitionId);
+    if (match) {
+      return {
+        trackId: match.id,
+        slotKind: "transition",
+      };
+    }
+  }
+
+  if (legacyUi.selectedFrameId) {
+    for (const track of tracks) {
+      if (track.startFrame.id === legacyUi.selectedFrameId) {
+        return {
+          trackId: track.id,
+          slotKind: "startFrame",
+        };
+      }
+
+      if (track.endFrame.id === legacyUi.selectedFrameId) {
+        return {
+          trackId: track.id,
+          slotKind: "endFrame",
+        };
+      }
+    }
+  }
+
+  return {
+    trackId: tracks[0]!.id,
+    slotKind: "startFrame",
+  };
 }
 
 function buildFrameViews(manifest: ProjectManifest) {
@@ -240,7 +519,11 @@ function buildFrameViews(manifest: ProjectManifest) {
       previousCurrentVersionId,
     );
     const currentVersion = hasCurrentApproval ? approvedVersion : latestMatchingVersion;
-    const blockedByFrameId = isFrameBlockedByUpstream(frame, previousFrame) ? previousFrame?.id ?? null : null;
+    const dependsOnPreviousFrame =
+      getEffectiveFrameReferenceMode(frame, currentVersion) && frame.position > 0;
+    const blockedByFrameId = isFrameBlockedByUpstream(frame, previousFrame, dependsOnPreviousFrame)
+      ? previousFrame?.id ?? null
+      : null;
     const jobs = getFrameJobs(frame.id, manifest.jobs);
     const status = deriveFrameStatus({
       frame,
@@ -260,8 +543,8 @@ function buildFrameViews(manifest: ProjectManifest) {
       galleryVersions,
       hasCurrentApproval,
       queuedJobs: jobs.filter((job) => job.status !== "completed").length,
-      nextAction: deriveFrameNextAction(status),
-      dependsOnPreviousFrame: frame.usePreviousFrameAsReference && frame.position > 0,
+      nextAction: deriveFrameNextAction(frame, status),
+      dependsOnPreviousFrame,
       blockedByFrameId,
       downstreamImpactCount: 0,
       queueRank: frame.position * 2,
@@ -551,11 +834,21 @@ export function buildProjectSnapshot(
       return view;
     });
 
+  const tracks = buildTrackViews(transitions);
+  const resolvedSelection = resolveTrackSelection(manifest, tracks);
+  manifest.ui = {
+    ...manifest.ui,
+    selectedSlot: resolvedSelection,
+  };
+  delete (manifest.ui as PersistedUiState & { selectedFrameId?: string | null }).selectedFrameId;
+  delete (manifest.ui as PersistedUiState & { selectedTransitionId?: string | null }).selectedTransitionId;
+
   return {
     projectPath,
     manifest,
     frames,
     transitions,
+    tracks,
   };
 }
 

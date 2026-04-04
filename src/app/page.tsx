@@ -1,4 +1,4 @@
-import { MovieCreatorApp } from "@/components/movie-creator-app";
+import { MovieCreatorApp } from "@/components/movie-creator-tracks-app";
 import { openProject } from "@/lib/project-store";
 import { resumeProjectJobs } from "@/lib/job-runner";
 

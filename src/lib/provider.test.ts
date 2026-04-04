@@ -116,5 +116,16 @@ describe("provider transition generation", () => {
       duration: 4,
       fps: 24,
     });
+    expect(asset.responsePayload).toEqual({
+      submitResponse: {
+        id: "pred_123",
+        status: "processing",
+      },
+      settledResponse: {
+        id: "pred_123",
+        status: "completed",
+        outputs: ["https://cdn.example/transition.mp4"],
+      },
+    });
   });
 });

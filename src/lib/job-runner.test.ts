@@ -31,6 +31,7 @@ import {
   enqueueTransitionGeneration,
   resumeProjectJobs,
 } from "./job-runner";
+import type { GeneratedFrameAsset, GeneratedTransitionAsset } from "./provider";
 import { readProjectSnapshot, saveManifest, setCurrentProjectPath } from "./project-store";
 import type { Frame, FrameVersion, ProjectManifest } from "./types";
 
@@ -172,6 +173,7 @@ describe("frame job anchoring", () => {
         providerPredictionId: "pred_test",
         relativePath: path.join("frames", "generated", "candidate.png"),
         inputPayload: { model: "mock-edit-model" },
+        responsePayload: { id: "pred_test", status: "completed" },
       },
     ]);
     generateTransitionVideoMock.mockResolvedValue({
@@ -180,6 +182,7 @@ describe("frame job anchoring", () => {
       relativePath: path.join("transitions", "generated", "clip.mp4"),
       posterRelativePath: path.join("transitions", "generated", "poster.png"),
       inputPayload: { model: "mock-video-model" },
+      responsePayload: { id: "pred_transition", status: "completed" },
     });
   });
 
@@ -532,11 +535,11 @@ describe("frame job anchoring", () => {
     const projectPath = await createTempProject();
     tempDirs.push(projectPath);
 
-    let resolveFrame1: ((value: Awaited<ReturnType<typeof generateFrameImagesMock>>) => void) | null = null;
-    let resolveFrame2: ((value: Awaited<ReturnType<typeof generateFrameImagesMock>>) => void) | null = null;
-    let resolveFrame3: ((value: Awaited<ReturnType<typeof generateFrameImagesMock>>) => void) | null = null;
-    let resolveTransition1: ((value: Awaited<ReturnType<typeof generateTransitionVideoMock>>) => void) | null = null;
-    let resolveTransition2: ((value: Awaited<ReturnType<typeof generateTransitionVideoMock>>) => void) | null = null;
+    let resolveFrame1: ((value: GeneratedFrameAsset[]) => void) | null = null;
+    let resolveFrame2: ((value: GeneratedFrameAsset[]) => void) | null = null;
+    let resolveFrame3: ((value: GeneratedFrameAsset[]) => void) | null = null;
+    let resolveTransition1: ((value: GeneratedTransitionAsset) => void) | null = null;
+    let resolveTransition2: ((value: GeneratedTransitionAsset) => void) | null = null;
 
     generateFrameImagesMock
       .mockImplementationOnce(
@@ -604,12 +607,16 @@ describe("frame job anchoring", () => {
       expect(generateTransitionVideoMock).toHaveBeenCalledTimes(0);
     });
 
-    resolveFrame1?.([
+    if (!resolveFrame1) {
+      throw new Error("Missing frame resolver 1");
+    }
+    (resolveFrame1 as (value: GeneratedFrameAsset[]) => void)([
       {
         model: "mock-edit-model",
         providerPredictionId: "pred_frame_1",
         relativePath: path.join("frames", "generated", "frame-1.png"),
         inputPayload: { model: "mock-edit-model", step: 1 },
+        responsePayload: { id: "pred_frame_1", status: "completed" },
       },
     ]);
 
@@ -618,12 +625,16 @@ describe("frame job anchoring", () => {
       expect(generateTransitionVideoMock).toHaveBeenCalledTimes(0);
     });
 
-    resolveFrame2?.([
+    if (!resolveFrame2) {
+      throw new Error("Missing frame resolver 2");
+    }
+    (resolveFrame2 as (value: GeneratedFrameAsset[]) => void)([
       {
         model: "mock-edit-model",
         providerPredictionId: "pred_frame_2",
         relativePath: path.join("frames", "generated", "frame-2.png"),
         inputPayload: { model: "mock-edit-model", step: 2 },
+        responsePayload: { id: "pred_frame_2", status: "completed" },
       },
     ]);
 
@@ -632,12 +643,16 @@ describe("frame job anchoring", () => {
       expect(generateTransitionVideoMock).toHaveBeenCalledTimes(1);
     });
 
-    resolveFrame3?.([
+    if (!resolveFrame3) {
+      throw new Error("Missing frame resolver 3");
+    }
+    (resolveFrame3 as (value: GeneratedFrameAsset[]) => void)([
       {
         model: "mock-edit-model",
         providerPredictionId: "pred_frame_3",
         relativePath: path.join("frames", "generated", "frame-3.png"),
         inputPayload: { model: "mock-edit-model", step: 3 },
+        responsePayload: { id: "pred_frame_3", status: "completed" },
       },
     ]);
 
@@ -645,24 +660,32 @@ describe("frame job anchoring", () => {
       expect(generateTransitionVideoMock).toHaveBeenCalledTimes(1);
     });
 
-    resolveTransition1?.({
+    if (!resolveTransition1) {
+      throw new Error("Missing transition resolver 1");
+    }
+    (resolveTransition1 as (value: GeneratedTransitionAsset) => void)({
       model: "mock-video-model",
       providerPredictionId: "pred_transition_1",
       relativePath: path.join("transitions", "generated", "clip-1.mp4"),
       posterRelativePath: path.join("transitions", "generated", "poster-1.png"),
       inputPayload: { model: "mock-video-model", step: 1 },
+      responsePayload: { id: "pred_transition_1", status: "completed" },
     });
 
     await waitForAssertion(() => {
       expect(generateTransitionVideoMock).toHaveBeenCalledTimes(2);
     });
 
-    resolveTransition2?.({
+    if (!resolveTransition2) {
+      throw new Error("Missing transition resolver 2");
+    }
+    (resolveTransition2 as (value: GeneratedTransitionAsset) => void)({
       model: "mock-video-model",
       providerPredictionId: "pred_transition_2",
       relativePath: path.join("transitions", "generated", "clip-2.mp4"),
       posterRelativePath: path.join("transitions", "generated", "poster-2.png"),
       inputPayload: { model: "mock-video-model", step: 2 },
+      responsePayload: { id: "pred_transition_2", status: "completed" },
     });
 
     const frameSnapshot = await waitForFrameJobToSettle(projectPath);

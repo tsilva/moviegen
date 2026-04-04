@@ -4,10 +4,8 @@ import { mutateCurrentProject } from "@/lib/project-store";
 import { reconcileTransitions } from "@/lib/project-ops";
 
 const requestSchema = z.object({
-  title: z.string().optional(),
   imagePrompt: z.string().optional(),
   usePreviousFrameAsReference: z.boolean().optional(),
-  notes: z.string().optional(),
 });
 
 export async function PATCH(
@@ -23,20 +21,12 @@ export async function PATCH(
         throw new Error("Frame not found");
       }
 
-      if (body.title !== undefined) {
-        frame.title = body.title;
-      }
-
       if (body.imagePrompt !== undefined) {
         frame.imagePrompt = body.imagePrompt;
       }
 
       if (body.usePreviousFrameAsReference !== undefined) {
         frame.usePreviousFrameAsReference = body.usePreviousFrameAsReference;
-      }
-
-      if (body.notes !== undefined) {
-        frame.notes = body.notes;
       }
 
       frame.updatedAt = new Date().toISOString();

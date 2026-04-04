@@ -3,11 +3,13 @@ import { z } from "zod";
 const reviewerDecisionSchema = z.enum(["approved", "rejected", "unreviewed"]);
 const jobStatusSchema = z.enum(["queued", "running", "completed", "error"]);
 const sequenceScopeSchema = z.enum(["active", "archived"]);
+const trackSlotKindSchema = z.enum(["startFrame", "transition", "endFrame"]);
 
 export const frameVersionSchema = z.object({
   id: z.string(),
   model: z.string(),
   inputPayload: z.record(z.string(), z.unknown()),
+  responsePayload: z.unknown().optional(),
   outputPath: z.string(),
   thumbnailPath: z.string(),
   generationJobId: z.string(),
@@ -36,6 +38,7 @@ export const transitionVersionSchema = z.object({
   id: z.string(),
   model: z.string(),
   inputPayload: z.record(z.string(), z.unknown()),
+  responsePayload: z.unknown().optional(),
   outputPath: z.string(),
   posterPath: z.string(),
   generationJobId: z.string(),
@@ -92,23 +95,39 @@ export const projectManifestSchema = z.object({
   frames: z.array(frameSchema),
   transitions: z.array(transitionSchema),
   jobs: z.array(generationJobSchema),
-  ui: z.object({
-    themeMode: z.literal("dark"),
-    viewMode: z.enum(["sequence", "play", "table"]).catch("sequence").transform((value) => {
-      if (value === "play") {
-        return "play" as const;
-      }
+  ui: z
+    .object({
+      themeMode: z.literal("dark"),
+      viewMode: z.enum(["sequence", "play", "table"]).catch("sequence").transform((value) => {
+        if (value === "play") {
+          return "play" as const;
+        }
 
-      return "sequence" as const;
-    }),
-    selectedFrameId: z.string().nullable(),
-    selectedTransitionId: z.string().nullable(),
-    filter: z.enum(["all", "needsRepair", "needsAttention", "approved"]).catch("needsRepair").transform((value) => {
-      if (value === "all") {
-        return "all" as const;
-      }
+        return "sequence" as const;
+      }),
+      selectedSlot: z
+        .object({
+          trackId: z.string(),
+          slotKind: trackSlotKindSchema,
+        })
+        .nullable()
+        .optional(),
+      selectedFrameId: z.string().nullable().optional(),
+      selectedTransitionId: z.string().nullable().optional(),
+      filter: z.enum(["all", "needsRepair", "needsAttention", "approved"]).catch("needsRepair").transform((value) => {
+        if (value === "all") {
+          return "all" as const;
+        }
 
-      return "needsRepair" as const;
-    }),
-  }),
+        return "needsRepair" as const;
+      }),
+    })
+    .transform((ui) => ({
+      themeMode: ui.themeMode,
+      viewMode: ui.viewMode,
+      selectedSlot: ui.selectedSlot ?? null,
+      filter: ui.filter,
+      selectedFrameId: ui.selectedFrameId ?? null,
+      selectedTransitionId: ui.selectedTransitionId ?? null,
+    })),
 });

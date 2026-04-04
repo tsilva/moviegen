@@ -64,4 +64,39 @@ describe("project schema", () => {
     expect(playParsed.ui.viewMode).toBe("play");
     expect(legacyParsed.ui.viewMode).toBe("sequence");
   });
+
+  test("accepts persisted selected slot state", () => {
+    const manifest = createEmptyManifest("slot-project");
+
+    const parsed = projectManifestSchema.parse({
+      ...manifest,
+      ui: {
+        ...manifest.ui,
+        selectedSlot: {
+          trackId: "transition_1",
+          slotKind: "transition",
+        },
+      },
+    });
+
+    expect(parsed.ui.selectedSlot).toEqual({
+      trackId: "transition_1",
+      slotKind: "transition",
+    });
+  });
+
+  test("tolerates legacy selection fields while defaulting selectedSlot", () => {
+    const manifest = createEmptyManifest("legacy-selection-project");
+
+    const parsed = projectManifestSchema.parse({
+      ...manifest,
+      ui: {
+        ...manifest.ui,
+        selectedFrameId: "frame_1",
+        selectedTransitionId: null,
+      },
+    });
+
+    expect(parsed.ui.selectedSlot).toBeNull();
+  });
 });

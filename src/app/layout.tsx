@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { ColorSchemeScript } from "@mantine/core";
 import { Geist, Geist_Mono } from "next/font/google";
 import "@mantine/core/styles.css";
 import "@mantine/notifications/styles.css";
@@ -33,9 +32,6 @@ export default function RootLayout({
       data-mantine-color-scheme="dark"
       suppressHydrationWarning
     >
-      <head>
-        <ColorSchemeScript forceColorScheme="dark" />
-      </head>
       <body>
         <AppProviders>{children}</AppProviders>
       </body>

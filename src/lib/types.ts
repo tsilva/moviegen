@@ -2,6 +2,8 @@ export type ReviewerDecision = "approved" | "rejected" | "unreviewed";
 export type JobStatus = "queued" | "running" | "completed" | "error";
 export type SequenceScope = "active" | "archived";
 export type GenerationProvider = "mock" | "atlas";
+export type TrackSlotKind = "startFrame" | "transition" | "endFrame";
+export type TrackSlotStatusColor = "orange" | "gray" | "blue" | "cyan" | "teal" | "red";
 
 export type ProjectMeta = {
   id: string;
@@ -15,6 +17,7 @@ export type FrameVersion = {
   id: string;
   model: string;
   inputPayload: Record<string, unknown>;
+  responsePayload?: unknown;
   outputPath: string;
   thumbnailPath: string;
   generationJobId: string;
@@ -43,6 +46,7 @@ export type TransitionVersion = {
   id: string;
   model: string;
   inputPayload: Record<string, unknown>;
+  responsePayload?: unknown;
   outputPath: string;
   posterPath: string;
   generationJobId: string;
@@ -91,9 +95,13 @@ export type GenerationJob = {
 export type PersistedUiState = {
   themeMode: "dark";
   viewMode: "sequence" | "play";
-  selectedFrameId: string | null;
-  selectedTransitionId: string | null;
+  selectedSlot: TrackSlotSelection | null;
   filter: "all" | "needsRepair";
+};
+
+export type TrackSlotSelection = {
+  trackId: string;
+  slotKind: TrackSlotKind;
 };
 
 export type ProjectManifest = {
@@ -167,11 +175,47 @@ export type TransitionView = Transition & {
   disabledReason: string | null;
 };
 
+export type TrackSlotView = {
+  trackId: string;
+  slotKind: TrackSlotKind;
+  entryKind: "frame" | "transition";
+  entryId: string;
+  label: string;
+  prompt: string;
+  promptPlaceholder: boolean;
+  statusLabel: string;
+  statusColor: TrackSlotStatusColor;
+  summary: string;
+  previewPath: string | null;
+  zoomPath: string | null;
+  posterPath: string | null;
+  isStale: boolean;
+  isBlocked: boolean;
+  canGenerate: boolean;
+  disabledReason: string | null;
+  candidateCount: number;
+};
+
+export type TrackView = {
+  id: string;
+  index: number;
+  transitionId: string;
+  startFrame: FrameView;
+  transition: TransitionView;
+  endFrame: FrameView;
+  slots: {
+    startFrame: TrackSlotView;
+    transition: TrackSlotView;
+    endFrame: TrackSlotView;
+  };
+};
+
 export type ProjectSnapshot = {
   projectPath: string;
   manifest: ProjectManifest;
   frames: FrameView[];
   transitions: TransitionView[];
+  tracks: TrackView[];
 };
 
 export type ReorderImpactSummary = {

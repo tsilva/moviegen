@@ -6,6 +6,7 @@ export type GeneratedFrameAsset = {
   providerPredictionId: string | null;
   relativePath: string;
   inputPayload: Record<string, unknown>;
+  responsePayload: unknown;
 };
 
 export type GeneratedTransitionAsset = {
@@ -14,6 +15,7 @@ export type GeneratedTransitionAsset = {
   relativePath: string;
   posterRelativePath: string;
   inputPayload: Record<string, unknown>;
+  responsePayload: unknown;
 };
 
 type GenerateFrameImageInput = {
@@ -326,6 +328,17 @@ async function persistGeneratedAsset(projectPath: string, relativeDir: string, f
   return relativePath;
 }
 
+function buildResponsePayload(initial: AtlasGenerationResponse, settled: AtlasGenerationResponse) {
+  if (initial === settled) {
+    return initial;
+  }
+
+  return {
+    submitResponse: initial,
+    settledResponse: settled,
+  };
+}
+
 export async function generateFrameImages(input: GenerateFrameImageInput): Promise<GeneratedFrameAsset[]> {
   const referenceImages = await Promise.all(
     input.referenceImages.map((reference) => ensureRemoteReference(input.projectPath, reference)),
@@ -385,6 +398,7 @@ export async function generateFrameImages(input: GenerateFrameImageInput): Promi
       providerPredictionId: predictionId,
       relativePath,
       inputPayload: requestPayload,
+      responsePayload: buildResponsePayload(initial, settled),
     });
   }
 
@@ -449,5 +463,6 @@ export async function generateTransitionVideo(
     relativePath,
     posterRelativePath: input.posterPath,
     inputPayload: requestPayload,
+    responsePayload: buildResponsePayload(initial, settled),
   };
 }

@@ -35,7 +35,7 @@ type AppProvidersProps = {
 export function AppProviders({ children }: AppProvidersProps) {
   return (
     <MantineProvider theme={theme} forceColorScheme="dark">
-      <Notifications position="top-right" />
+      <Notifications position="bottom-right" />
       {children}
     </MantineProvider>
   );

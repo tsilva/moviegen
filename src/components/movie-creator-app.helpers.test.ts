@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { FrameVersion, FrameView, TransitionVersion, TransitionView } from "@/lib/types";
 import {
+  buildBulkFrameRows,
   getFrameCardMeta,
   getFrameDisplayPrompt,
   getFrameGenerationDraft,
@@ -305,6 +306,40 @@ describe("movie creator transition helpers", () => {
         isPending: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe("bulk frame helpers", () => {
+  test("pairs uploaded images with prompt lines in order", () => {
+    expect(
+      buildBulkFrameRows("First shot\nSecond shot", ["refs/a.png"]),
+    ).toEqual([
+      {
+        imagePrompt: "First shot",
+        referenceImages: ["refs/a.png"],
+        usePreviousFrameAsReference: false,
+      },
+      {
+        imagePrompt: "Second shot",
+      },
+    ]);
+  });
+
+  test("keeps extra images as image-led frames", () => {
+    expect(
+      buildBulkFrameRows("First shot", ["refs/a.png", "refs/b.png"]),
+    ).toEqual([
+      {
+        imagePrompt: "First shot",
+        referenceImages: ["refs/a.png"],
+        usePreviousFrameAsReference: false,
+      },
+      {
+        imagePrompt: "",
+        referenceImages: ["refs/b.png"],
+        usePreviousFrameAsReference: false,
+      },
+    ]);
   });
 });
 

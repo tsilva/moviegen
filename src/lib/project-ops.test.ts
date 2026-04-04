@@ -121,8 +121,9 @@ describe("project transition reconciliation", () => {
     expect(snapshot.transitions[0]?.nextAction).toBe("generate");
   });
 
-  test("frame next actions only queue generation work", () => {
+  test("frame next actions require prompts before generation work", () => {
     const manifest = createEmptyManifest("test");
+    const blankDraft = { ...frame("Blank"), imagePrompt: "" };
     const draft = frame("Draft");
     const candidateOnly = frame("Candidate only");
     const approved = frame("Approved");
@@ -132,7 +133,7 @@ describe("project transition reconciliation", () => {
     candidateOnly.versions.push(reviewVersion);
     approved.versions.push(approvedVersion);
     approved.approvedVersionId = approvedVersion.id;
-    manifest.frames = [draft, candidateOnly, approved].map((item, index) => ({
+    manifest.frames = [blankDraft, draft, candidateOnly, approved].map((item, index) => ({
       ...item,
       position: index,
     }));
@@ -141,13 +142,15 @@ describe("project transition reconciliation", () => {
 
     expect(snapshot.frames.map((item) => item.status)).toEqual([
       "draft",
+      "draft",
       "generated_unreviewed",
       "approved",
     ]);
     expect(snapshot.frames.map((item) => [item.position, item.nextAction])).toEqual([
-      [0, "generate"],
-      [1, null],
+      [0, "write_prompt"],
+      [1, "generate"],
       [2, null],
+      [3, null],
     ]);
   });
 
@@ -232,23 +235,40 @@ describe("project transition reconciliation", () => {
     ]);
   });
 
-  test("frame gallery hides stale versions and keeps newest compatible assets first", () => {
+  test("frame entry prompt changes do not make compatible versions stale", () => {
     const manifest = createEmptyManifest("test");
     const current = frame("Current");
-    const staleVersion = {
-      ...frameVersion("framever_stale"),
-      sourcePrompt: "Old prompt",
+    const approvedVersion = {
+      ...frameVersion("framever_current"),
+      sourcePrompt: "Original prompt",
     };
+
+    current.versions.push(approvedVersion);
+    current.approvedVersionId = approvedVersion.id;
+    current.imagePrompt = "Revised draft prompt";
+    manifest.frames = [{ ...current, position: 0 }];
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+    expect(snapshot.frames[0]?.status).toBe("approved");
+    expect(snapshot.frames[0]?.currentVersion?.id).toBe(approvedVersion.id);
+    expect(snapshot.frames[0]?.galleryVersions.map((version) => version.id)).toEqual([
+      approvedVersion.id,
+    ]);
+  });
+
+  test("frame gallery keeps multiple prompt variants when dependency state still matches", () => {
+    const manifest = createEmptyManifest("test");
+    const current = frame("Current");
     const firstCompatible = {
       ...frameVersion("framever_first"),
-      sourcePrompt: current.imagePrompt,
+      sourcePrompt: "First prompt variant",
     };
     const secondCompatible = {
       ...frameVersion("framever_second"),
-      sourcePrompt: current.imagePrompt,
+      sourcePrompt: "Second prompt variant",
     };
 
-    current.versions.push(staleVersion, firstCompatible, secondCompatible);
+    current.versions.push(firstCompatible, secondCompatible);
     current.approvedVersionId = firstCompatible.id;
     manifest.frames = [{ ...current, position: 0 }];
 
@@ -257,6 +277,62 @@ describe("project transition reconciliation", () => {
       secondCompatible.id,
       firstCompatible.id,
     ]);
+  });
+
+  test("frame gallery hides versions whose upstream dependency no longer matches", () => {
+    const manifest = createEmptyManifest("test");
+    const first = frame("A");
+    const second = frame("B");
+    second.usePreviousFrameAsReference = true;
+
+    const firstOld = frameVersion("framever_first_old");
+    const firstNew = frameVersion("framever_first_new");
+    const staleVersion = {
+      ...frameVersion("framever_second_stale"),
+      sourcePrompt: "Second prompt",
+      usePreviousFrameAsReference: true,
+      dependencyFrameId: first.id,
+      dependencyVersionId: firstOld.id,
+    };
+    const currentVersion = {
+      ...frameVersion("framever_second_current"),
+      sourcePrompt: "Second prompt updated",
+      usePreviousFrameAsReference: true,
+      dependencyFrameId: first.id,
+      dependencyVersionId: firstNew.id,
+    };
+
+    first.versions.push(firstOld, firstNew);
+    first.approvedVersionId = firstNew.id;
+    second.versions.push(staleVersion, currentVersion);
+    second.approvedVersionId = currentVersion.id;
+    manifest.frames = [first, second].map((item, index) => ({ ...item, position: index }));
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+    expect(snapshot.frames[1]?.galleryVersions.map((version) => version.id)).toEqual([
+      currentVersion.id,
+    ]);
+  });
+
+  test("downstream dependency flags derive from the current version metadata", () => {
+    const manifest = createEmptyManifest("test");
+    const first = frame("A");
+    const second = frame("B");
+    second.usePreviousFrameAsReference = true;
+
+    const standaloneVersion = {
+      ...frameVersion("framever_second_standalone"),
+      sourcePrompt: "Standalone shot",
+      usePreviousFrameAsReference: false,
+    };
+
+    second.versions.push(standaloneVersion);
+    second.approvedVersionId = standaloneVersion.id;
+    manifest.frames = [first, second].map((item, index) => ({ ...item, position: index }));
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+    expect(snapshot.frames[1]?.dependsOnPreviousFrame).toBe(false);
+    expect(snapshot.frames[1]?.status).toBe("approved");
   });
 
   test("approved transition stays selected when a newer alternate clip exists", () => {
@@ -486,6 +562,52 @@ describe("project transition reconciliation", () => {
     expect(snapshot.transitions[0]?.videoStatus).toBe("stale");
     expect(snapshot.transitions[0]?.blockedByFrameIds).toEqual([second.id]);
     expect(snapshot.transitions[0]?.nextAction).toBeNull();
+    expect(snapshot.tracks[0]?.slots.startFrame.isStale).toBe(false);
+    expect(snapshot.tracks[0]?.slots.endFrame.isStale).toBe(true);
+    expect(snapshot.tracks[0]?.slots.endFrame.isBlocked).toBe(false);
+    expect(snapshot.tracks[0]?.slots.transition.isStale).toBe(true);
+    expect(snapshot.tracks[0]?.slots.transition.isBlocked).toBe(true);
+  });
+
+  test("builds one derived track per active transition with shared boundary frames", () => {
+    const manifest = createEmptyManifest("test");
+    const first = frame("A");
+    const second = frame("B");
+    const third = frame("C");
+    manifest.frames = [first, second, third].map((item, index) => ({ ...item, position: index }));
+    reconcileTransitions(manifest);
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+
+    expect(snapshot.tracks).toHaveLength(2);
+    expect(snapshot.tracks[0]?.startFrame.id).toBe(first.id);
+    expect(snapshot.tracks[0]?.endFrame.id).toBe(second.id);
+    expect(snapshot.tracks[1]?.startFrame.id).toBe(second.id);
+    expect(snapshot.tracks[1]?.endFrame.id).toBe(third.id);
+    expect(snapshot.tracks[0]?.endFrame).toBe(snapshot.tracks[1]?.startFrame);
+  });
+
+  test("maps legacy selected ids onto the first matching track slot", () => {
+    const manifest = createEmptyManifest("test");
+    const first = frame("A");
+    const second = frame("B");
+    const third = frame("C");
+    manifest.frames = [first, second, third].map((item, index) => ({ ...item, position: index }));
+    reconcileTransitions(manifest);
+
+    (
+      manifest.ui as typeof manifest.ui & {
+        selectedFrameId?: string | null;
+        selectedTransitionId?: string | null;
+      }
+    ).selectedFrameId = second.id;
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+
+    expect(snapshot.manifest.ui.selectedSlot).toEqual({
+      trackId: snapshot.tracks[0]!.id,
+      slotKind: "endFrame",
+    });
   });
 
   test("queue ranks remain upstream to downstream after reorder", () => {

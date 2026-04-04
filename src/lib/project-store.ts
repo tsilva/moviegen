@@ -64,6 +64,12 @@ export async function saveManifest(projectPath: string, manifest: ProjectManifes
   const manifestPath = getManifestPath(projectPath);
   const tempPath = `${manifestPath}.${process.pid}.${crypto.randomUUID()}.tmp`;
   manifest.project.updatedAt = nowIso();
+  manifest.ui = {
+    themeMode: manifest.ui.themeMode,
+    viewMode: manifest.ui.viewMode,
+    selectedSlot: manifest.ui.selectedSlot,
+    filter: manifest.ui.filter,
+  };
   await fs.writeFile(tempPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   await fs.rename(tempPath, manifestPath);
 }

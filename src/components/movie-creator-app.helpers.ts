@@ -109,6 +109,32 @@ export function getTransitionGenerationDraft(transition: TransitionView, selecte
   };
 }
 
+export function buildBulkFrameRows(promptInput: string, referenceImagePaths: string[]) {
+  const prompts = promptInput
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const rowCount = Math.max(prompts.length, referenceImagePaths.length);
+
+  return Array.from({ length: rowCount }, (_, index) => {
+    const prompt = prompts[index] ?? "";
+    const referencePath = referenceImagePaths[index];
+
+    if (!referencePath) {
+      return {
+        imagePrompt: prompt,
+      };
+    }
+
+    return {
+      imagePrompt: prompt,
+      referenceImages: [referencePath],
+      usePreviousFrameAsReference: false,
+    };
+  });
+}
+
 export function shouldAutoSelectGeneratedTile(input: {
   selectedTileId: string | undefined;
   addTileId: string;

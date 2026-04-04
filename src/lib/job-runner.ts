@@ -14,6 +14,7 @@ import { mutateCurrentProject, mutateProject, readProjectSnapshot } from "@/lib/
 import { generateFrameImages, generateTransitionVideo } from "@/lib/provider";
 import type {
   Frame,
+  FrameView,
   FrameVersion,
   GenerationJob,
   ProjectManifest,
@@ -308,7 +309,7 @@ function resolveQueuedTransitionJob(
   if (!fromApprovedVersionId || !toApprovedVersionId) {
     const blockedFrames = [transition.fromFrameId, transition.toFrameId]
       .map((frameId) => frameViewMap.get(frameId) ?? null)
-      .filter((frame) => frame != null && frame.currentVersion == null);
+      .filter((frame): frame is FrameView => frame != null && frame.currentVersion == null);
 
     const waitingOnActiveGeneration = blockedFrames.some(
       (frame) =>
@@ -434,6 +435,7 @@ async function completeFrameJob(
   model: string,
   providerPredictionId: string | null,
   inputPayload: Record<string, unknown>,
+  responsePayload: unknown,
   dependencyFrameId: string | null,
   dependencyVersionId: string | null,
 ) {
@@ -475,6 +477,7 @@ async function completeFrameJob(
       id: versionId,
       model: model || IMAGE_MODEL,
       inputPayload,
+      responsePayload,
       outputPath: relativePath,
       thumbnailPath: relativePath,
       generationJobId: job.id,
@@ -525,6 +528,7 @@ async function completeTransitionJob(
   model: string,
   providerPredictionId: string | null,
   inputPayload: Record<string, unknown>,
+  responsePayload: unknown,
   promptRevision: number,
   fromApprovedVersionId: string,
   toApprovedVersionId: string,
@@ -563,6 +567,7 @@ async function completeTransitionJob(
       id: versionId,
       model: model || VIDEO_MODEL,
       inputPayload,
+      responsePayload,
       outputPath: relativePath,
       posterPath,
       generationJobId: job.id,
@@ -671,6 +676,7 @@ async function runQueuedFrameJobs(projectPath: string) {
           asset.model,
           asset.providerPredictionId,
           asset.inputPayload,
+          asset.responsePayload,
           claimed.dependencyFrameId,
           claimed.dependencyVersionId,
         );
@@ -723,6 +729,7 @@ async function runQueuedTransitionJobs(projectPath: string) {
           asset.model,
           asset.providerPredictionId,
           asset.inputPayload,
+          asset.responsePayload,
           claimed.promptRevision,
           claimed.fromApprovedVersionId,
           claimed.toApprovedVersionId,
