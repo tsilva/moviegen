@@ -111,6 +111,7 @@ const PROJECT_PATH_PLACEHOLDER =
 const WORKSPACE_HEIGHT = "calc(100dvh - 32px)";
 const GALLERY_ADD_TILE_ID = "__add__";
 const ENTRY_PREVIEW_WIDTH = 180;
+const PANEL_PADDING = 12;
 
 function assetUrl(relativePath: string | null | undefined) {
   if (!relativePath) {
@@ -595,7 +596,7 @@ function TrackCard({
       ref={cardRef}
       withBorder
       radius="lg"
-      p={12}
+      p={PANEL_PADDING}
       style={{
         background: "rgba(13, 18, 25, 0.9)",
         borderColor: "rgba(84, 96, 112, 0.28)",
@@ -790,7 +791,7 @@ function NextStepCard({
   return (
     <Box
       style={{
-        padding: 12,
+        padding: PANEL_PADDING,
         borderRadius: 16,
         border: "1px solid rgba(78, 201, 240, 0.22)",
         background: "rgba(26, 38, 51, 0.48)",
@@ -840,7 +841,7 @@ function SequenceOverview({
     <Stack gap="sm">
       <Box
         style={{
-          padding: 10,
+          padding: PANEL_PADDING,
           borderRadius: 16,
           border: "1px solid rgba(255,255,255,0.08)",
           background: "rgba(255,255,255,0.03)",
@@ -951,7 +952,7 @@ function SequenceOverview({
             style={{
               flex: "1 1 120px",
               minWidth: 120,
-              padding: 10,
+              padding: PANEL_PADDING,
               borderRadius: 14,
               border: "1px solid rgba(255,255,255,0.08)",
               background: "rgba(255,255,255,0.03)",
@@ -996,6 +997,7 @@ export function MovieCreatorApp({
   const transitionAutosaveRequestIdRef = useRef(0);
   const movieVideoRef = useRef<HTMLVideoElement | null>(null);
   const trackCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const frameReferenceInputRef = useRef<HTMLInputElement | null>(null);
   const normalizedProjectPath = projectPath.trim();
 
   const tracks = snapshot?.tracks ?? [];
@@ -1303,14 +1305,12 @@ export function MovieCreatorApp({
   const movieIsPlaying = moviePlaying && activeMovieClip != null;
   const overviewStats = getSequenceOverviewStats(frames, transitions, moviePlaylist.length);
   const nextStep = getSequenceNextStep(frames, transitions, moviePlaylist.length);
-  const nextStepSelection =
-    nextStep.kind === "current_cut_ready"
-      ? null
-      : findSelectionForEntry(tracks, nextStep.kind, nextStep.entryId);
   const isNextStepSelected =
-    nextStepSelection != null &&
-    nextStepSelection.trackId === selectedSlot?.trackId &&
-    nextStepSelection.slotKind === selectedSlot?.slotKind;
+    nextStep.kind === "frame"
+      ? selectedFrame?.id === nextStep.entryId
+      : nextStep.kind === "transition"
+        ? selectedTransition?.id === nextStep.entryId
+        : false;
   const showNextStepCard = nextStep.kind === "current_cut_ready" || !isNextStepSelected;
 
   useEffect(() => {
@@ -1579,6 +1579,21 @@ export function MovieCreatorApp({
     } catch (error) {
       notifications.show({ color: "red", message: error instanceof Error ? error.message : "Upload failed" });
     }
+  }
+
+  function openFrameReferencePicker() {
+    frameReferenceInputRef.current?.click();
+  }
+
+  async function handleFrameReferenceInputChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.currentTarget.files ?? []);
+    event.currentTarget.value = "";
+
+    if (!selectedFrame || files.length === 0) {
+      return;
+    }
+
+    await handleFrameReferenceDrop(selectedFrame, files);
   }
 
   async function generateSelectedTransition(transition: TransitionView) {
@@ -1910,7 +1925,7 @@ export function MovieCreatorApp({
                         />
                       ) : null}
 
-                      <Card withBorder radius="xl" p={10}>
+                      <Card withBorder radius="xl" p={PANEL_PADDING}>
                         {!selectedTrack || !selectedSlotView ? (
                           <Stack gap="xs">
                             <Text fw={700}>Select a slot</Text>
@@ -1968,11 +1983,28 @@ export function MovieCreatorApp({
                               }}
                             />
 
-                            <Group gap="xs">
+                            <Group gap="xs" grow>
+                              <input
+                                ref={frameReferenceInputRef}
+                                type="file"
+                                accept="image/*"
+                                multiple
+                                hidden
+                                onChange={(event) => {
+                                  void handleFrameReferenceInputChange(event);
+                                }}
+                              />
+                              <Button
+                                size="sm"
+                                variant="default"
+                                leftSection={<IconFolderOpen size={14} aria-hidden="true" />}
+                                onClick={openFrameReferencePicker}
+                              >
+                                Add File
+                              </Button>
                               <Button
                                 size="sm"
                                 color="cyan"
-                                fullWidth
                                 disabled={!selectedSlotView.canGenerate && framePromptDraft.trim().length === 0}
                                 onClick={() => void generateSelectedFrame(selectedFrame)}
                               >
