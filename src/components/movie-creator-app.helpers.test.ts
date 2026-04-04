@@ -244,7 +244,7 @@ describe("movie creator transition helpers", () => {
     expect(getTransitionCardMeta(transition, "__add__")).toMatchObject({
       title: "Transition 1 -> 2",
       prompt: "No transition prompt yet",
-      statusLabel: "Add Asset",
+      statusLabel: "Generate",
       action: {
         label: "Generate Clip",
       },

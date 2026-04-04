@@ -31,7 +31,6 @@ import {
   IconPlayerPlay,
   IconPlus,
   IconTrash,
-  IconZoomIn,
 } from "@tabler/icons-react";
 import type {
   FrameVersion,
@@ -44,23 +43,15 @@ import type {
   TransitionView,
 } from "@/lib/types";
 import {
-  getFrameDisplayPrompt,
   getFrameGenerationDraft,
   getSequenceNextStep,
   getSequenceOverviewStats,
-  getTransitionDisplayPrompt,
   getTransitionGenerationDraft,
   shouldAutoSelectGeneratedTile,
 } from "@/components/movie-creator-app.helpers";
 
 type ApiResult = ProjectSnapshot & {
   impact?: unknown;
-};
-
-type ZoomTarget = {
-  src: string;
-  alt: string;
-  title: string;
 };
 
 type AssetInfoTarget = {
@@ -90,9 +81,7 @@ type AssetGalleryProps<TVersion extends FrameVersion | TransitionVersion> = {
   pending: boolean;
   kind: "frame" | "transition";
   getVersionLabel?: (version: TVersion) => string;
-  addTileDisabled?: boolean;
-  addTileDescription?: string;
-  onSelectAdd: () => void;
+  onDropFiles?: (files: File[]) => void | Promise<void>;
   onSelectVersion: (versionId: string) => void;
   onOpenInfo: (version: TVersion) => void;
 };
@@ -103,9 +92,6 @@ type SequenceOverviewProps = {
   missingInputCount: number;
   actionableGenerationCount: number;
   inProgressCount: number;
-  nextStepTitle: string;
-  nextStepDescription: string;
-  nextStepCtaLabel: string | null;
   activeMovieClip: MoviePlaylistEntry | null;
   movieIndex: number;
   moviePlaylist: MoviePlaylistEntry[];
@@ -113,7 +99,6 @@ type SequenceOverviewProps = {
   movieVideoRef: React.RefObject<HTMLVideoElement | null>;
   onTogglePlayback: () => void;
   onSelectMovieClip: (index: number) => void;
-  onNextStep: () => void;
   onLoadedData: () => void;
   onPlay: () => void;
   onPause: () => void;
@@ -150,14 +135,6 @@ function formatPayload(value: unknown) {
   }
 
   return JSON.stringify(value, null, 2);
-}
-
-function findFrameVersionByTileId(frame: FrameView, tileId: string) {
-  return frame.galleryVersions.find((version) => version.id === tileId) ?? null;
-}
-
-function findTransitionVersionByTileId(transition: TransitionView, tileId: string) {
-  return transition.galleryVersions.find((version) => version.id === tileId) ?? null;
 }
 
 function getSelectionFromSnapshot(snapshot: ProjectSnapshot | null): TrackSlotSelection | null {
@@ -210,32 +187,6 @@ function findSelectionForEntry(
   return null;
 }
 
-function getFramePreviewVersion(frame: FrameView, selectedTileId: string) {
-  if (selectedTileId === GALLERY_ADD_TILE_ID) {
-    return frame.currentVersion ?? frame.approvedVersion ?? frame.latestVersion;
-  }
-
-  return (
-    findFrameVersionByTileId(frame, selectedTileId) ??
-    frame.currentVersion ??
-    frame.approvedVersion ??
-    frame.latestVersion
-  );
-}
-
-function getTransitionPreviewVersion(transition: TransitionView, selectedTileId: string) {
-  if (selectedTileId === GALLERY_ADD_TILE_ID) {
-    return transition.currentVideo ?? transition.approvedVideoVersion ?? transition.latestVideoVersion;
-  }
-
-  return (
-    findTransitionVersionByTileId(transition, selectedTileId) ??
-    transition.currentVideo ??
-    transition.approvedVideoVersion ??
-    transition.latestVideoVersion
-  );
-}
-
 function getSlotSelectionLabel(slot: TrackSlotView) {
   switch (slot.slotKind) {
     case "startFrame":
@@ -247,92 +198,27 @@ function getSlotSelectionLabel(slot: TrackSlotView) {
   }
 }
 
-function ZoomableThumb({ src, zoomSrc, alt, emptyLabel, width, onZoom }: {
-  src: string | null | undefined;
-  zoomSrc: string | null | undefined;
-  alt: string;
-  emptyLabel: string;
-  width: number | string;
-  onZoom: (target: ZoomTarget) => void;
-}) {
-  const previewSrc = src ? assetUrl(src) : "";
-  const expandedSrc = zoomSrc ? assetUrl(zoomSrc) : previewSrc;
+function getTrackRangeLabel(track: TrackView) {
+  return `Frames ${track.startFrame.position + 1}-${track.endFrame.position + 1}`;
+}
 
-  return (
-    <Box style={{ width, flex: typeof width === "number" ? `0 0 ${width}px` : undefined }}>
-      <Box
-        role={previewSrc ? "button" : undefined}
-        tabIndex={previewSrc ? 0 : -1}
-        aria-label={previewSrc ? `Zoom ${alt}` : undefined}
-        onClick={
-          previewSrc
-            ? (event) => {
-                event.stopPropagation();
-                onZoom({ src: expandedSrc, alt, title: alt });
-              }
-            : undefined
-        }
-        onKeyDown={
-          previewSrc
-            ? (event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onZoom({ src: expandedSrc, alt, title: alt });
-                }
-              }
-            : undefined
-        }
-        style={{
-          aspectRatio: "16 / 9",
-          width: "100%",
-          borderRadius: 14,
-          overflow: "hidden",
-          position: "relative",
-          background: "rgba(255,255,255,0.04)",
-          border: "1px solid rgba(255,255,255,0.08)",
-          cursor: previewSrc ? "zoom-in" : "default",
-        }}
-      >
-        {previewSrc ? (
-          <>
-            <Image
-              src={previewSrc}
-              alt={alt}
-              fill
-              unoptimized
-              sizes={typeof width === "number" ? `${width}px` : "100vw"}
-              style={{ objectFit: "cover", display: "block" }}
-            />
-            <Group
-              gap={4}
-              style={{
-                position: "absolute",
-                right: 8,
-                bottom: 8,
-                padding: "4px 6px",
-                borderRadius: 999,
-                background: "rgba(8, 12, 18, 0.72)",
-                color: "white",
-                pointerEvents: "none",
-              }}
-            >
-              <IconZoomIn size={12} aria-hidden="true" />
-              <Text size="xs" fw={600}>
-                Zoom
-              </Text>
-            </Group>
-          </>
-        ) : (
-          <Flex h="100%" align="center" justify="center">
-            <Text c="dimmed" size="sm">
-              {emptyLabel}
-            </Text>
-          </Flex>
-        )}
-      </Box>
-    </Box>
-  );
+function getCompactSlotEyebrow(slot: TrackSlotView) {
+  switch (slot.slotKind) {
+    case "startFrame":
+      return "Start";
+    case "transition":
+      return "Clip";
+    case "endFrame":
+      return "End";
+  }
+}
+
+function getCompactSlotTitle(slot: TrackSlotView) {
+  if (slot.slotKind === "transition") {
+    return slot.label.replace(/^Transition\s+/i, "");
+  }
+
+  return slot.label;
 }
 
 function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
@@ -342,12 +228,21 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
   pending,
   kind,
   getVersionLabel,
-  addTileDisabled = false,
-  addTileDescription,
-  onSelectAdd,
+  onDropFiles,
   onSelectVersion,
   onOpenInfo,
 }: AssetGalleryProps<TVersion>) {
+  const [isDropActive, setIsDropActive] = useState(false);
+  const canDropFiles = kind === "frame" && onDropFiles != null;
+
+  function containsDraggedFiles(event: React.DragEvent<HTMLElement>) {
+    return Array.from(event.dataTransfer?.types ?? []).includes("Files");
+  }
+
+  function resetDropState() {
+    setIsDropActive(false);
+  }
+
   return (
     <Stack gap="xs">
       <Group justify="space-between" align="center">
@@ -359,44 +254,120 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
           {versions.length === 1 ? "" : "s"}
         </Text>
       </Group>
-      <Group gap="sm" align="stretch">
-        <UnstyledButton
-          disabled={addTileDisabled}
-          onClick={onSelectAdd}
-          style={{
-            display: "block",
-            width: ENTRY_PREVIEW_WIDTH,
-            flex: `0 0 ${ENTRY_PREVIEW_WIDTH}px`,
-            borderRadius: 16,
-            border:
-              selectedTileId === GALLERY_ADD_TILE_ID
-                ? "1px solid rgba(78, 201, 240, 0.72)"
-                : "1px solid rgba(255,255,255,0.08)",
-            background:
-              selectedTileId === GALLERY_ADD_TILE_ID ? "rgba(30, 70, 92, 0.36)" : "rgba(255,255,255,0.02)",
-            overflow: "hidden",
-            opacity: addTileDisabled ? 0.6 : 1,
-            cursor: addTileDisabled ? "not-allowed" : "pointer",
-          }}
-        >
-          <Flex
-            direction="column"
-            align="center"
-            justify="center"
-            gap="xs"
-            style={{ aspectRatio: "16 / 9", padding: 16 }}
+      <Group
+        gap="sm"
+        align="stretch"
+        onDragEnter={
+          canDropFiles
+            ? (event) => {
+                if (!containsDraggedFiles(event)) {
+                  return;
+                }
+
+                event.preventDefault();
+                setIsDropActive(true);
+              }
+            : undefined
+        }
+        onDragOver={
+          canDropFiles
+            ? (event) => {
+                if (!containsDraggedFiles(event)) {
+                  return;
+                }
+
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "copy";
+
+                if (!isDropActive) {
+                  setIsDropActive(true);
+                }
+              }
+            : undefined
+        }
+        onDragLeave={
+          canDropFiles
+            ? (event) => {
+                if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  return;
+                }
+
+                resetDropState();
+              }
+            : undefined
+        }
+        onDrop={
+          canDropFiles
+            ? async (event) => {
+                if (!containsDraggedFiles(event)) {
+                  return;
+                }
+
+                event.preventDefault();
+                resetDropState();
+
+                const droppedFiles = Array.from(event.dataTransfer.files ?? []);
+                if (!droppedFiles.length) {
+                  return;
+                }
+
+                await onDropFiles?.(droppedFiles);
+              }
+            : undefined
+        }
+        style={{
+          borderRadius: 16,
+          outline: isDropActive ? "1px dashed rgba(94, 230, 176, 0.8)" : undefined,
+          outlineOffset: 6,
+        }}
+      >
+        {pending ? (
+          <Box
+            key={GALLERY_ADD_TILE_ID}
+            style={{
+              display: "block",
+              width: ENTRY_PREVIEW_WIDTH,
+              flex: `0 0 ${ENTRY_PREVIEW_WIDTH}px`,
+              borderRadius: 16,
+              border:
+                selectedTileId === GALLERY_ADD_TILE_ID
+                  ? "1px solid rgba(78, 201, 240, 0.72)"
+                  : "1px solid rgba(255,255,255,0.08)",
+              background:
+                selectedTileId === GALLERY_ADD_TILE_ID
+                  ? "rgba(30, 70, 92, 0.36)"
+                  : "rgba(255,255,255,0.02)",
+              overflow: "hidden",
+            }}
           >
-            {pending ? <Loader size="sm" color="cyan" /> : <IconPlus size={24} aria-hidden="true" />}
-            <Text fw={600} size="sm">
-              {pending ? "Generating" : "Add Asset"}
-            </Text>
-            <Text c="dimmed" size="xs" ta="center">
-              {pending
-                ? "Waiting for output"
-                : addTileDescription ?? (kind === "frame" ? "Generate a new frame" : "Generate a new clip")}
-            </Text>
-          </Flex>
-        </UnstyledButton>
+            <Stack gap="xs" p="xs">
+              <Flex
+                direction="column"
+                align="center"
+                justify="center"
+                gap="xs"
+                style={{
+                  aspectRatio: "16 / 9",
+                  borderRadius: 12,
+                  background: "rgba(255,255,255,0.04)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  padding: 16,
+                }}
+              >
+                <Loader size="sm" color="cyan" />
+                <Text fw={600} size="sm">
+                  Waiting
+                </Text>
+                <Text c="dimmed" size="xs" ta="center">
+                  {kind === "frame" ? "A new asset is queued." : "A new clip is queued."}
+                </Text>
+              </Flex>
+              <Text c="dimmed" size="xs" truncate>
+                {kind === "frame" ? "Waiting for asset" : "Waiting for clip"}
+              </Text>
+            </Stack>
+          </Box>
+        ) : null}
 
         {versions.map((version) => {
           const isSelected = selectedTileId === version.id;
@@ -499,6 +470,8 @@ function TrackSlotTile({
   onSelect: () => void;
 }) {
   const previewSrc = slot.previewPath ? assetUrl(slot.previewPath) : "";
+  const detailText = slot.promptPlaceholder ? slot.summary : slot.prompt;
+  const compactTitle = getCompactSlotTitle(slot);
   const borderColor = selected
     ? "rgba(78, 201, 240, 0.72)"
     : slot.isStale
@@ -515,20 +488,20 @@ function TrackSlotTile({
       onClick={onSelect}
       style={{
         display: "block",
-        flex: "1 1 220px",
-        minWidth: 220,
-        borderRadius: 18,
+        flex: "1 1 160px",
+        minWidth: 160,
+        borderRadius: 14,
         border: `1px solid ${borderColor}`,
         background,
         overflow: "hidden",
       }}
     >
-      <Stack gap="sm" p="sm">
+      <Stack gap={8} p={8}>
         <Box
           style={{
-            aspectRatio: "16 / 9",
+            aspectRatio: "16 / 5.25",
             overflow: "hidden",
-            borderRadius: 12,
+            borderRadius: 8,
             position: "relative",
             background: "rgba(255,255,255,0.05)",
           }}
@@ -543,8 +516,8 @@ function TrackSlotTile({
               style={{ objectFit: "cover", display: "block" }}
             />
           ) : (
-            <Flex h="100%" align="center" justify="center" p="sm">
-              <Text c="dimmed" size="sm" ta="center">
+            <Flex h="100%" align="center" justify="center" p="xs">
+              <Text c="dimmed" size="xs" ta="center">
                 {slot.entryKind === "frame" ? "No frame yet" : "No clip yet"}
               </Text>
             </Flex>
@@ -569,33 +542,36 @@ function TrackSlotTile({
           ) : null}
         </Box>
 
-        <Group justify="space-between" align="flex-start" wrap="nowrap">
+        <Group justify="space-between" align="flex-start" gap={6} wrap="nowrap">
           <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
-            <Text fw={700} size="sm">
-              {getSlotSelectionLabel(slot)}
+            <Text c="dimmed" size="10px" fw={700} tt="uppercase" lh={1.1}>
+              {getCompactSlotEyebrow(slot)}
             </Text>
-            <Text c="dimmed" size="xs">
-              {slot.label}
+            <Text fw={700} size="sm" truncate>
+              {compactTitle}
             </Text>
           </Stack>
-          <Badge color={slot.statusColor}>{slot.statusLabel}</Badge>
+          <Group gap={4} wrap="nowrap">
+            <Badge color={slot.statusColor} size="sm">
+              {slot.statusLabel}
+            </Badge>
+            {slot.isStale ? (
+              <Badge color="orange" size="sm" variant="light">
+                Stale
+              </Badge>
+            ) : null}
+          </Group>
         </Group>
 
-        <Text size="sm" lineClamp={2} c={slot.promptPlaceholder ? "dimmed" : undefined}>
-          {slot.prompt}
+        <Text size="xs" lineClamp={1} c={slot.promptPlaceholder ? "dimmed" : undefined}>
+          {detailText}
         </Text>
 
-        <Group justify="space-between" gap="xs">
-          <Text c="dimmed" size="xs">
-            {slot.candidateCount} compatible {slot.entryKind === "frame" ? "frame" : "clip"}
-            {slot.candidateCount === 1 ? "" : "s"}
+        {slot.candidateCount > 0 ? (
+          <Text c="dimmed" size="10px">
+            {slot.candidateCount} option{slot.candidateCount === 1 ? "" : "s"}
           </Text>
-          {slot.isStale ? (
-            <Badge color="orange" variant="light">
-              Stale
-            </Badge>
-          ) : null}
-        </Group>
+        ) : null}
       </Stack>
     </UnstyledButton>
   );
@@ -605,38 +581,51 @@ function TrackCard({
   track,
   selectedSlot,
   onSelectSlot,
+  onDeleteTrack,
   cardRef,
 }: {
   track: TrackView;
   selectedSlot: TrackSlotSelection | null;
   onSelectSlot: (selection: TrackSlotSelection) => void;
+  onDeleteTrack: () => void;
   cardRef: (node: HTMLDivElement | null) => void;
 }) {
   return (
     <Card
       ref={cardRef}
       withBorder
-      radius="xl"
-      p="md"
+      radius="lg"
+      p={12}
       style={{
         background: "rgba(13, 18, 25, 0.9)",
         borderColor: "rgba(84, 96, 112, 0.28)",
       }}
     >
-      <Stack gap="md">
-        <Group justify="space-between" align="flex-start">
-          <Stack gap={2}>
-            <Text fw={700}>Track {track.index + 1}</Text>
-            <Text c="dimmed" size="sm">
-              Frame {track.startFrame.position + 1} to Frame {track.endFrame.position + 1}
+      <Stack gap={10}>
+        <Group justify="space-between" align="center" gap="xs" wrap="nowrap">
+          <Group gap={8} wrap="nowrap">
+            <Text fw={700} size="sm">
+              Track {track.index + 1}
             </Text>
-          </Stack>
-          <Text c="dimmed" size="xs">
-            Shared end/start boundaries stay in sync across adjacent tracks.
-          </Text>
+            <Text c="dimmed" size="xs">
+              {getTrackRangeLabel(track)}
+            </Text>
+          </Group>
+          <ActionIcon
+            variant="subtle"
+            color="red"
+            size="sm"
+            aria-label={`Delete Track ${track.index + 1}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onDeleteTrack();
+            }}
+          >
+            <IconTrash size={14} aria-hidden="true" />
+          </ActionIcon>
         </Group>
 
-        <Flex gap="sm" wrap="wrap">
+        <Flex gap={8} wrap="wrap">
           <TrackSlotTile
             slot={track.slots.startFrame}
             selected={
@@ -679,37 +668,6 @@ function TrackCard({
         </Flex>
       </Stack>
     </Card>
-  );
-}
-
-function ZoomModal({ target, onClose }: { target: ZoomTarget | null; onClose: () => void }) {
-  if (!target) {
-    return null;
-  }
-
-  return (
-    <Modal opened onClose={onClose} size="90vw" centered title={target.title}>
-      <Box
-        style={{
-          position: "relative",
-          width: "100%",
-          maxHeight: "80dvh",
-          aspectRatio: "16 / 9",
-          overflow: "hidden",
-          borderRadius: 12,
-          background: "rgba(255,255,255,0.04)",
-        }}
-      >
-        <Image
-          src={target.src}
-          alt={target.alt}
-          fill
-          unoptimized
-          sizes="90vw"
-          style={{ objectFit: "contain", display: "block" }}
-        />
-      </Box>
-    </Modal>
   );
 }
 
@@ -818,15 +776,54 @@ function AddTrackSeparator({ label, onClick }: { label: string; onClick: () => v
   );
 }
 
+function NextStepCard({
+  title,
+  description,
+  ctaLabel,
+  onNextStep,
+}: {
+  title: string;
+  description: string;
+  ctaLabel: string | null;
+  onNextStep: () => void;
+}) {
+  return (
+    <Box
+      style={{
+        padding: 12,
+        borderRadius: 16,
+        border: "1px solid rgba(78, 201, 240, 0.22)",
+        background: "rgba(26, 38, 51, 0.48)",
+      }}
+    >
+      <Stack gap="xs">
+        <Stack gap={2}>
+          <Text c="dimmed" size="xs" tt="uppercase" fw={700}>
+            Next Up
+          </Text>
+          <Text fw={700} size="sm">
+            {title}
+          </Text>
+          <Text c="dimmed" size="xs">
+            {description}
+          </Text>
+        </Stack>
+        {ctaLabel ? (
+          <Button color="cyan" size="xs" fullWidth onClick={onNextStep}>
+            {ctaLabel}
+          </Button>
+        ) : null}
+      </Stack>
+    </Box>
+  );
+}
+
 function SequenceOverview({
   currentClipCount,
   totalTransitionCount,
   missingInputCount,
   actionableGenerationCount,
   inProgressCount,
-  nextStepTitle,
-  nextStepDescription,
-  nextStepCtaLabel,
   activeMovieClip,
   movieIndex,
   moviePlaylist,
@@ -834,7 +831,6 @@ function SequenceOverview({
   movieVideoRef,
   onTogglePlayback,
   onSelectMovieClip,
-  onNextStep,
   onLoadedData,
   onPlay,
   onPause,
@@ -927,34 +923,6 @@ function SequenceOverview({
         </Stack>
       </Box>
 
-      <Box
-        style={{
-          padding: 12,
-          borderRadius: 16,
-          border: "1px solid rgba(78, 201, 240, 0.22)",
-          background: "rgba(26, 38, 51, 0.48)",
-        }}
-      >
-        <Stack gap="xs">
-          <Stack gap={2}>
-            <Text c="dimmed" size="xs" tt="uppercase" fw={700}>
-              Next Up
-            </Text>
-            <Text fw={700} size="sm">
-              {nextStepTitle}
-            </Text>
-            <Text c="dimmed" size="xs">
-              {nextStepDescription}
-            </Text>
-          </Stack>
-          {nextStepCtaLabel ? (
-            <Button color="cyan" size="xs" fullWidth onClick={onNextStep}>
-              {nextStepCtaLabel}
-            </Button>
-          ) : null}
-        </Stack>
-      </Box>
-
       <Flex gap="xs" wrap="wrap" align="stretch">
         {[
           {
@@ -1011,7 +979,6 @@ export function MovieCreatorApp({
 }: MovieCreatorAppProps) {
   const [snapshot, setSnapshot] = useState<ProjectSnapshot | null>(initialSnapshot);
   const [projectPath, setProjectPath] = useState(initialProjectPath);
-  const [zoomTarget, setZoomTarget] = useState<ZoomTarget | null>(null);
   const [assetInfoTarget, setAssetInfoTarget] = useState<AssetInfoTarget | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<TrackSlotSelection | null>(getSelectionFromSnapshot(initialSnapshot));
   const [projectModalOpen, setProjectModalOpen] = useState(false);
@@ -1020,9 +987,13 @@ export function MovieCreatorApp({
   const [moviePlaying, setMoviePlaying] = useState(false);
   const [framePromptDraft, setFramePromptDraft] = useState("");
   const [frameUsePreviousDraft, setFrameUsePreviousDraft] = useState(false);
+  const [frameConfigDirty, setFrameConfigDirty] = useState(false);
   const [transitionPromptDraft, setTransitionPromptDraft] = useState("");
+  const [transitionConfigDirty, setTransitionConfigDirty] = useState(false);
   const previousPendingByEntryRef = useRef<Record<string, boolean>>({});
   const previousDefaultTileByEntryRef = useRef<Record<string, string>>({});
+  const frameAutosaveRequestIdRef = useRef(0);
+  const transitionAutosaveRequestIdRef = useRef(0);
   const movieVideoRef = useRef<HTMLVideoElement | null>(null);
   const trackCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const normalizedProjectPath = projectPath.trim();
@@ -1040,6 +1011,8 @@ export function MovieCreatorApp({
       : null;
   const selectedTransition =
     selectedTrack && selectedSlotView?.entryKind === "transition" ? selectedTrack.transition : null;
+  const selectedFrameTileId = selectedFrame ? getSelectedGalleryTileId(selectedFrame) : GALLERY_ADD_TILE_ID;
+  const selectedTransitionTileId = selectedTransition ? getSelectedGalleryTileId(selectedTransition) : GALLERY_ADD_TILE_ID;
 
   function galleryKey(kind: "frame" | "transition", id: string) {
     return `${kind}:${id}`;
@@ -1131,40 +1104,76 @@ export function MovieCreatorApp({
     }
   }, [normalizedProjectPath, snapshot]);
 
+  const syncSelectedSlot = useEffectEvent((nextSelection: TrackSlotSelection | null) => {
+    setSelectedSlot(nextSelection);
+  });
+
   useEffect(() => {
     const nextSelection = getSelectionFromSnapshot(snapshot);
     if (
       nextSelection?.trackId !== selectedSlot?.trackId ||
       nextSelection?.slotKind !== selectedSlot?.slotKind
     ) {
-      setSelectedSlot(nextSelection);
+      syncSelectedSlot(nextSelection);
     }
   }, [selectedSlot?.slotKind, selectedSlot?.trackId, snapshot]);
 
+  const syncSelectedEditorDrafts = useEffectEvent(
+    (nextState:
+      | { kind: "frame"; prompt: string; usePreviousFrameAsReference: boolean }
+      | { kind: "transition"; prompt: string }
+      | null) => {
+      if (!nextState) {
+        setFramePromptDraft("");
+        setFrameUsePreviousDraft(false);
+        setFrameConfigDirty(false);
+        setTransitionPromptDraft("");
+        setTransitionConfigDirty(false);
+        return;
+      }
+
+      if (nextState.kind === "frame") {
+        setFramePromptDraft(nextState.prompt);
+        setFrameUsePreviousDraft(nextState.usePreviousFrameAsReference);
+        setFrameConfigDirty(false);
+        setTransitionConfigDirty(false);
+        return;
+      }
+
+      setTransitionPromptDraft(nextState.prompt);
+      setFrameConfigDirty(false);
+      setTransitionConfigDirty(false);
+    },
+  );
+
   useEffect(() => {
     if (selectedFrame) {
-      const selectedGalleryTileId = getSelectedGalleryTileId(selectedFrame);
-      const draft = getFrameGenerationDraft(selectedFrame, selectedGalleryTileId);
-      setFramePromptDraft(draft.prompt);
-      setFrameUsePreviousDraft(draft.usePreviousFrameAsReference);
+      const draft = getFrameGenerationDraft(selectedFrame, selectedFrameTileId);
+      syncSelectedEditorDrafts({
+        kind: "frame",
+        prompt: draft.prompt,
+        usePreviousFrameAsReference: draft.usePreviousFrameAsReference,
+      });
       return;
     }
 
     if (selectedTransition) {
-      const selectedGalleryTileId = getSelectedGalleryTileId(selectedTransition);
-      const draft = getTransitionGenerationDraft(selectedTransition, selectedGalleryTileId);
-      setTransitionPromptDraft(draft.prompt);
+      const draft = getTransitionGenerationDraft(selectedTransition, selectedTransitionTileId);
+      syncSelectedEditorDrafts({
+        kind: "transition",
+        prompt: draft.prompt,
+      });
       return;
     }
 
-    setFramePromptDraft("");
-    setFrameUsePreviousDraft(false);
-    setTransitionPromptDraft("");
+    syncSelectedEditorDrafts(null);
   }, [
     selectedFrame?.id,
     selectedTransition?.id,
-    selectedFrame ? getSelectedGalleryTileId(selectedFrame) : null,
-    selectedTransition ? getSelectedGalleryTileId(selectedTransition) : null,
+    selectedFrameTileId,
+    selectedTransitionTileId,
+    selectedFrame,
+    selectedTransition,
   ]);
 
   useEffect(() => {
@@ -1294,6 +1303,15 @@ export function MovieCreatorApp({
   const movieIsPlaying = moviePlaying && activeMovieClip != null;
   const overviewStats = getSequenceOverviewStats(frames, transitions, moviePlaylist.length);
   const nextStep = getSequenceNextStep(frames, transitions, moviePlaylist.length);
+  const nextStepSelection =
+    nextStep.kind === "current_cut_ready"
+      ? null
+      : findSelectionForEntry(tracks, nextStep.kind, nextStep.entryId);
+  const isNextStepSelected =
+    nextStepSelection != null &&
+    nextStepSelection.trackId === selectedSlot?.trackId &&
+    nextStepSelection.slotKind === selectedSlot?.slotKind;
+  const showNextStepCard = nextStep.kind === "current_cut_ready" || !isNextStepSelected;
 
   useEffect(() => {
     const video = movieVideoRef.current;
@@ -1388,32 +1406,58 @@ export function MovieCreatorApp({
     }
   }
 
-  async function saveSelectedFrameConfig(frame: FrameView) {
+  async function saveFrameConfig(
+    frameId: string,
+    prompt: string,
+    usePreviousFrameAsReference: boolean,
+    successMessage?: string,
+  ) {
     return mutate(
-      `/api/frames/${frame.id}`,
+      `/api/frames/${frameId}`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          imagePrompt: framePromptDraft,
-          usePreviousFrameAsReference: frame.position === 0 ? false : frameUsePreviousDraft,
+          imagePrompt: prompt,
+          usePreviousFrameAsReference,
         }),
       },
-      "Frame config saved",
+      successMessage,
     );
   }
 
-  async function saveSelectedTransitionConfig(transition: TransitionView, notify = true) {
+  async function queueFrameGeneration(
+    frame: FrameView,
+    prompt: string,
+    usePreviousFrameAsReference: boolean,
+    successMessage = "Queued frame generation",
+  ) {
+    setSelectedGalleryTile("frame", frame.id, GALLERY_ADD_TILE_ID);
     return mutate(
-      `/api/transitions/${transition.id}`,
+      `/api/frames/${frame.id}/generate`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          usePreviousFrameAsReference,
+        }),
+      },
+      successMessage,
+    );
+  }
+
+  async function saveTransitionConfig(transitionId: string, prompt: string, successMessage?: string) {
+    return mutate(
+      `/api/transitions/${transitionId}`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          transitionPrompt: transitionPromptDraft,
+          transitionPrompt: prompt,
         }),
       },
-      notify ? "Transition config saved" : undefined,
+      successMessage,
     );
   }
 
@@ -1424,28 +1468,124 @@ export function MovieCreatorApp({
       return;
     }
 
-    setSelectedGalleryTile("frame", frame.id, GALLERY_ADD_TILE_ID);
-    await mutate(
-      `/api/frames/${frame.id}/generate`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt,
-          usePreviousFrameAsReference: frame.position === 0 ? false : frameUsePreviousDraft,
-        }),
-      },
-      "Queued frame generation",
+    const saved = await saveFrameConfig(
+      frame.id,
+      framePromptDraft,
+      frame.position === 0 ? false : frameUsePreviousDraft,
     );
-  }
-
-  async function generateSelectedTransition(transition: TransitionView) {
-    if (!transitionPromptDraft.trim() && !transition.transitionPrompt.trim()) {
-      notifications.show({ color: "yellow", message: "Add a transition prompt first." });
+    if (!saved) {
       return;
     }
 
-    const saved = await saveSelectedTransitionConfig(transition, false);
+    await queueFrameGeneration(
+      frame,
+      prompt,
+      frame.position === 0 ? false : frameUsePreviousDraft,
+    );
+  }
+
+  useEffect(() => {
+    if (!selectedFrame || !frameConfigDirty) {
+      return;
+    }
+
+    const frameId = selectedFrame.id;
+    const prompt = framePromptDraft;
+    const usePreviousFrameAsReference = selectedFrame.position === 0 ? false : frameUsePreviousDraft;
+    const requestId = frameAutosaveRequestIdRef.current + 1;
+    frameAutosaveRequestIdRef.current = requestId;
+
+    const timeout = window.setTimeout(() => {
+      void requestJson<ProjectSnapshot>(`/api/frames/${frameId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imagePrompt: prompt,
+          usePreviousFrameAsReference,
+        }),
+      })
+        .then((result) => {
+          if (frameAutosaveRequestIdRef.current !== requestId) {
+            return;
+          }
+
+          setSnapshot(result);
+          setFrameConfigDirty(false);
+        })
+        .catch((error) => {
+          if (frameAutosaveRequestIdRef.current !== requestId) {
+            return;
+          }
+
+          notifications.show({ color: "red", message: error instanceof Error ? error.message : "Failed to update frame" });
+        });
+    }, 300);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [frameConfigDirty, framePromptDraft, frameUsePreviousDraft, selectedFrame]);
+
+  async function handleFrameReferenceDrop(frame: FrameView, files: File[]) {
+    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+    if (!imageFiles.length) {
+      notifications.show({ color: "yellow", message: "Drop PNG, JPG, WEBP, or GIF images to use as frame references." });
+      return;
+    }
+
+    try {
+      const formData = new FormData();
+      for (const file of imageFiles) {
+        formData.append("files", file);
+      }
+
+      const upload = await requestJson<{ paths: string[] }>("/api/uploads/frame-references", {
+        method: "POST",
+        body: formData,
+      });
+
+      const saved = await mutate(
+        `/api/frames/${frame.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            referenceImages: [...frame.referenceImages, ...upload.paths],
+            usePreviousFrameAsReference: false,
+          }),
+        },
+      );
+      if (!saved) {
+        return;
+      }
+
+      setFrameUsePreviousDraft(false);
+
+      const prompt = framePromptDraft.trim() || frame.imagePrompt.trim();
+      if (!prompt) {
+        notifications.show({
+          color: "teal",
+          message: `Added ${upload.paths.length} reference image${upload.paths.length === 1 ? "" : "s"}. Add a frame prompt to generate from them.`,
+        });
+        return;
+      }
+
+      await queueFrameGeneration(
+        frame,
+        prompt,
+        false,
+        `Queued frame generation from ${upload.paths.length} reference image${upload.paths.length === 1 ? "" : "s"}`,
+      );
+    } catch (error) {
+      notifications.show({ color: "red", message: error instanceof Error ? error.message : "Upload failed" });
+    }
+  }
+
+  async function generateSelectedTransition(transition: TransitionView) {
+    const saved = await saveTransitionConfig(
+      transition.id,
+      transitionPromptDraft,
+    );
     if (!saved) {
       return;
     }
@@ -1467,60 +1607,97 @@ export function MovieCreatorApp({
     );
   }
 
-  async function approveSelectedFrameVersion(frame: FrameView) {
-    const selectedTileId = getSelectedGalleryTileId(frame);
-    if (selectedTileId === GALLERY_ADD_TILE_ID) {
+  useEffect(() => {
+    if (!selectedTransition || !transitionConfigDirty) {
+      return;
+    }
+
+    const transitionId = selectedTransition.id;
+    const prompt = transitionPromptDraft;
+    const requestId = transitionAutosaveRequestIdRef.current + 1;
+    transitionAutosaveRequestIdRef.current = requestId;
+
+    const timeout = window.setTimeout(() => {
+      void requestJson<ProjectSnapshot>(`/api/transitions/${transitionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transitionPrompt: prompt,
+        }),
+      })
+        .then((result) => {
+          if (transitionAutosaveRequestIdRef.current !== requestId) {
+            return;
+          }
+
+          setSnapshot(result);
+          setTransitionConfigDirty(false);
+        })
+        .catch((error) => {
+          if (transitionAutosaveRequestIdRef.current !== requestId) {
+            return;
+          }
+
+          notifications.show({ color: "red", message: error instanceof Error ? error.message : "Failed to update transition" });
+        });
+    }, 300);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [selectedTransition, transitionConfigDirty, transitionPromptDraft]);
+
+  async function selectFrameVersion(frame: FrameView, versionId: string) {
+    const previousTileId = getSelectedGalleryTileId(frame);
+    setSelectedGalleryTile("frame", frame.id, versionId);
+
+    if (versionId === frame.currentVersion?.id) {
       return;
     }
 
     const approved = await mutate(
-      `/api/frame-versions/${selectedTileId}/approve`,
+      `/api/frame-versions/${versionId}/approve`,
       { method: "POST" },
       "Current frame updated",
     );
 
-    if (approved) {
-      setSelectedGalleryTile("frame", frame.id, selectedTileId);
+    if (!approved) {
+      setSelectedGalleryTile("frame", frame.id, previousTileId);
     }
   }
 
-  async function approveSelectedTransitionVersion(transition: TransitionView) {
-    const selectedTileId = getSelectedGalleryTileId(transition);
-    if (selectedTileId === GALLERY_ADD_TILE_ID) {
+  async function selectTransitionVersion(transition: TransitionView, versionId: string) {
+    const previousTileId = getSelectedGalleryTileId(transition);
+    setSelectedGalleryTile("transition", transition.id, versionId);
+
+    if (versionId === transition.currentVideo?.id) {
       return;
     }
 
     const approved = await mutate(
-      `/api/transition-versions/${selectedTileId}/approve`,
+      `/api/transition-versions/${versionId}/approve`,
       { method: "POST" },
       "Current clip updated",
     );
 
-    if (approved) {
-      setSelectedGalleryTile("transition", transition.id, selectedTileId);
+    if (!approved) {
+      setSelectedGalleryTile("transition", transition.id, previousTileId);
     }
   }
 
-  async function deleteSelectedFrame(frame: FrameView) {
-    if (!window.confirm("Delete this frame? Its asset files and connected transition files will be moved into deleted/.")) {
-      return;
-    }
-
-    const result = await mutate(`/api/frames/${frame.id}/delete`, { method: "POST" }, "Frame archived to deleted/");
-    if (result) {
-      setSelectedSlot(getSelectionFromSnapshot(result));
-    }
-  }
-
-  async function deleteSelectedTransition(transition: TransitionView) {
-    if (!window.confirm("Delete this transition? Its asset files will be moved into deleted/ and a fresh blank transition will be recreated if the frames remain adjacent.")) {
+  async function deleteTrack(track: TrackView) {
+    if (
+      !window.confirm(
+        `Delete Track ${track.index + 1}? This removes Frame ${track.endFrame.position + 1} and reconnects the remaining sequence.`,
+      )
+    ) {
       return;
     }
 
     const result = await mutate(
-      `/api/transitions/${transition.id}/delete`,
+      `/api/frames/${track.endFrame.id}/delete`,
       { method: "POST" },
-      "Transition archived to deleted/",
+      "Track deleted",
     );
     if (result) {
       setSelectedSlot(getSelectionFromSnapshot(result));
@@ -1603,11 +1780,6 @@ export function MovieCreatorApp({
     selectSlot(selection);
     scrollTrackIntoView(selection.trackId);
   }
-
-  const selectedFrameTileId = selectedFrame ? getSelectedGalleryTileId(selectedFrame) : GALLERY_ADD_TILE_ID;
-  const selectedTransitionTileId = selectedTransition ? getSelectedGalleryTileId(selectedTransition) : GALLERY_ADD_TILE_ID;
-  const selectedFramePreview = selectedFrame ? getFramePreviewVersion(selectedFrame, selectedFrameTileId) : null;
-  const selectedTransitionPreview = selectedTransition ? getTransitionPreviewVersion(selectedTransition, selectedTransitionTileId) : null;
 
   return (
     <>
@@ -1704,6 +1876,7 @@ export function MovieCreatorApp({
                                 selectSlot(selection);
                                 scrollTrackIntoView(track.id);
                               }}
+                              onDeleteTrack={() => void deleteTrack(track)}
                               cardRef={(node) => {
                                 trackCardRefs.current[track.id] = node;
                               }}
@@ -1728,30 +1901,16 @@ export function MovieCreatorApp({
                     }}
                   >
                     <Stack gap="sm">
-                      <SequenceOverview
-                        currentClipCount={overviewStats.currentClipCount}
-                        totalTransitionCount={overviewStats.totalTransitionCount}
-                        missingInputCount={overviewStats.missingInputCount}
-                        actionableGenerationCount={overviewStats.actionableGenerationCount}
-                        inProgressCount={overviewStats.inProgressCount}
-                        nextStepTitle={nextStep.title}
-                        nextStepDescription={nextStep.description}
-                        nextStepCtaLabel={nextStep.ctaLabel}
-                        activeMovieClip={activeMovieClip}
-                        movieIndex={movieIndex}
-                        moviePlaylist={moviePlaylist}
-                        movieIsPlaying={movieIsPlaying}
-                        movieVideoRef={movieVideoRef}
-                        onTogglePlayback={toggleMoviePlayback}
-                        onSelectMovieClip={selectMovieClip}
-                        onNextStep={runNextStep}
-                        onLoadedData={handleActiveMovieLoadedData}
-                        onPlay={() => setMoviePlaying(true)}
-                        onPause={handleActiveMoviePause}
-                        onEnded={handleActiveMovieEnded}
-                      />
+                      {showNextStepCard ? (
+                        <NextStepCard
+                          title={nextStep.title}
+                          description={nextStep.description}
+                          ctaLabel={nextStep.ctaLabel}
+                          onNextStep={runNextStep}
+                        />
+                      ) : null}
 
-                      <Card withBorder radius="xl" p="md">
+                      <Card withBorder radius="xl" p={10}>
                         {!selectedTrack || !selectedSlotView ? (
                           <Stack gap="xs">
                             <Text fw={700}>Select a slot</Text>
@@ -1760,11 +1919,11 @@ export function MovieCreatorApp({
                             </Text>
                           </Stack>
                         ) : selectedFrame ? (
-                          <Stack gap="md">
+                          <Stack gap={8}>
                             <Group justify="space-between" align="flex-start">
                               <Stack gap={2}>
-                                <Text fw={700}>{getSlotSelectionLabel(selectedSlotView)}</Text>
-                                <Text c="dimmed" size="sm">
+                                <Text fw={700} size="sm">{getSlotSelectionLabel(selectedSlotView)}</Text>
+                                <Text c="dimmed" size="xs">
                                   Track {selectedTrack.index + 1} · {selectedSlotView.label}
                                 </Text>
                               </Stack>
@@ -1778,16 +1937,7 @@ export function MovieCreatorApp({
                               </Group>
                             </Group>
 
-                            <ZoomableThumb
-                              src={selectedFramePreview?.thumbnailPath}
-                              zoomSrc={selectedFramePreview?.outputPath}
-                              alt={selectedSlotView.label}
-                              emptyLabel="No image"
-                              width="100%"
-                              onZoom={setZoomTarget}
-                            />
-
-                            <Text c="dimmed" size="sm">
+                            <Text c="dimmed" size="xs">
                               {selectedSlotView.summary}
                             </Text>
                             {selectedSlotView.disabledReason ? (
@@ -1799,35 +1949,36 @@ export function MovieCreatorApp({
                             <Textarea
                               label="Frame Prompt"
                               value={framePromptDraft}
-                              onChange={(event) => setFramePromptDraft(event.currentTarget.value)}
-                              minRows={4}
+                              onChange={(event) => {
+                                setFramePromptDraft(event.currentTarget.value);
+                                setFrameConfigDirty(true);
+                              }}
+                              minRows={2}
+                              autosize
+                              maxRows={4}
                               autoComplete="off"
                             />
                             <Switch
                               label="Use previous frame as reference"
                               checked={selectedFrame.position === 0 ? false : frameUsePreviousDraft}
                               disabled={selectedFrame.position === 0}
-                              onChange={(event) => setFrameUsePreviousDraft(event.currentTarget.checked)}
+                              onChange={(event) => {
+                                setFrameUsePreviousDraft(event.currentTarget.checked);
+                                setFrameConfigDirty(true);
+                              }}
                             />
 
-                            <Group gap="xs" grow>
-                              <Button variant="light" onClick={() => void saveSelectedFrameConfig(selectedFrame)}>
-                                Save Config
-                              </Button>
+                            <Group gap="xs">
                               <Button
+                                size="sm"
                                 color="cyan"
+                                fullWidth
                                 disabled={!selectedSlotView.canGenerate && framePromptDraft.trim().length === 0}
                                 onClick={() => void generateSelectedFrame(selectedFrame)}
                               >
                                 Generate Asset
                               </Button>
                             </Group>
-
-                            {selectedFrameTileId !== GALLERY_ADD_TILE_ID ? (
-                              <Button variant="subtle" onClick={() => void approveSelectedFrameVersion(selectedFrame)}>
-                                Use Selected Candidate
-                              </Button>
-                            ) : null}
 
                             <Divider color="rgba(255,255,255,0.08)" />
 
@@ -1838,23 +1989,17 @@ export function MovieCreatorApp({
                               pending={selectedFrame.status === "queued" || selectedFrame.status === "generating"}
                               kind="frame"
                               getVersionLabel={(version) => version.sourcePrompt?.trim() || "No frame prompt yet"}
-                              addTileDisabled={!selectedSlotView.canGenerate && framePromptDraft.trim().length === 0}
-                              addTileDescription={selectedSlotView.disabledReason ?? "Generate a new compatible frame"}
-                              onSelectAdd={() => void generateSelectedFrame(selectedFrame)}
-                              onSelectVersion={(versionId) => setSelectedGalleryTile("frame", selectedFrame.id, versionId)}
+                              onDropFiles={(files) => void handleFrameReferenceDrop(selectedFrame, files)}
+                              onSelectVersion={(versionId) => void selectFrameVersion(selectedFrame, versionId)}
                               onOpenInfo={(version) => openAssetInfo("frame", version)}
                             />
-
-                            <Button color="red" variant="subtle" onClick={() => void deleteSelectedFrame(selectedFrame)}>
-                              Delete Frame
-                            </Button>
                           </Stack>
                         ) : selectedTransition ? (
-                          <Stack gap="md">
+                          <Stack gap={8}>
                             <Group justify="space-between" align="flex-start">
                               <Stack gap={2}>
-                                <Text fw={700}>{getSlotSelectionLabel(selectedSlotView)}</Text>
-                                <Text c="dimmed" size="sm">
+                                <Text fw={700} size="sm">{getSlotSelectionLabel(selectedSlotView)}</Text>
+                                <Text c="dimmed" size="xs">
                                   Track {selectedTrack.index + 1} · {selectedSlotView.label}
                                 </Text>
                               </Stack>
@@ -1868,16 +2013,7 @@ export function MovieCreatorApp({
                               </Group>
                             </Group>
 
-                            <ZoomableThumb
-                              src={selectedTransitionPreview?.posterPath}
-                              zoomSrc={selectedTransitionPreview?.outputPath}
-                              alt={selectedSlotView.label}
-                              emptyLabel="No clip"
-                              width="100%"
-                              onZoom={setZoomTarget}
-                            />
-
-                            <Text c="dimmed" size="sm">
+                            <Text c="dimmed" size="xs">
                               {selectedSlotView.summary}
                             </Text>
                             {selectedSlotView.disabledReason ? (
@@ -1889,29 +2025,27 @@ export function MovieCreatorApp({
                             <Textarea
                               label="Transition Prompt"
                               value={transitionPromptDraft}
-                              onChange={(event) => setTransitionPromptDraft(event.currentTarget.value)}
-                              minRows={4}
+                              onChange={(event) => {
+                                setTransitionPromptDraft(event.currentTarget.value);
+                                setTransitionConfigDirty(true);
+                              }}
+                              minRows={2}
+                              autosize
+                              maxRows={4}
                               autoComplete="off"
                             />
 
-                            <Group gap="xs" grow>
-                              <Button variant="light" onClick={() => void saveSelectedTransitionConfig(selectedTransition)}>
-                                Save Config
-                              </Button>
+                            <Group gap="xs">
                               <Button
+                                size="sm"
                                 color="cyan"
-                                disabled={!selectedSlotView.canGenerate && transitionPromptDraft.trim().length === 0}
+                                fullWidth
+                                disabled={!selectedSlotView.canGenerate}
                                 onClick={() => void generateSelectedTransition(selectedTransition)}
                               >
                                 Generate Clip
                               </Button>
                             </Group>
-
-                            {selectedTransitionTileId !== GALLERY_ADD_TILE_ID ? (
-                              <Button variant="subtle" onClick={() => void approveSelectedTransitionVersion(selectedTransition)}>
-                                Use Selected Candidate
-                              </Button>
-                            ) : null}
 
                             <Divider color="rgba(255,255,255,0.08)" />
 
@@ -1925,19 +2059,31 @@ export function MovieCreatorApp({
                               }
                               kind="transition"
                               getVersionLabel={(version) => version.sourcePrompt?.trim() || "No transition prompt yet"}
-                              addTileDisabled={!selectedSlotView.canGenerate && transitionPromptDraft.trim().length === 0}
-                              addTileDescription={selectedSlotView.disabledReason ?? "Generate a new compatible clip"}
-                              onSelectAdd={() => void generateSelectedTransition(selectedTransition)}
-                              onSelectVersion={(versionId) => setSelectedGalleryTile("transition", selectedTransition.id, versionId)}
+                              onSelectVersion={(versionId) => void selectTransitionVersion(selectedTransition, versionId)}
                               onOpenInfo={(version) => openAssetInfo("transition", version)}
                             />
-
-                            <Button color="red" variant="subtle" onClick={() => void deleteSelectedTransition(selectedTransition)}>
-                              Delete Transition
-                            </Button>
                           </Stack>
                         ) : null}
                       </Card>
+
+                      <SequenceOverview
+                        currentClipCount={overviewStats.currentClipCount}
+                        totalTransitionCount={overviewStats.totalTransitionCount}
+                        missingInputCount={overviewStats.missingInputCount}
+                        actionableGenerationCount={overviewStats.actionableGenerationCount}
+                        inProgressCount={overviewStats.inProgressCount}
+                        activeMovieClip={activeMovieClip}
+                        movieIndex={movieIndex}
+                        moviePlaylist={moviePlaylist}
+                        movieIsPlaying={movieIsPlaying}
+                        movieVideoRef={movieVideoRef}
+                        onTogglePlayback={toggleMoviePlayback}
+                        onSelectMovieClip={selectMovieClip}
+                        onLoadedData={handleActiveMovieLoadedData}
+                        onPlay={() => setMoviePlaying(true)}
+                        onPause={handleActiveMoviePause}
+                        onEnded={handleActiveMovieEnded}
+                      />
                     </Stack>
                   </Box>
                 </Box>
@@ -1947,7 +2093,6 @@ export function MovieCreatorApp({
         </ScrollArea>
       </Box>
 
-      <ZoomModal target={zoomTarget} onClose={() => setZoomTarget(null)} />
       <AssetInfoModal target={assetInfoTarget} onClose={() => setAssetInfoTarget(null)} />
 
       <Modal opened={projectModalOpen} onClose={() => setProjectModalOpen(false)} title="Open Project">

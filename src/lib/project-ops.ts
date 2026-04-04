@@ -322,11 +322,11 @@ function getTransitionStatusMeta(transition: TransitionView) {
 
   if (transition.videoStatus === "stale" || transition.videoStatus === "not_ready") {
     return {
-      statusLabel: transition.transitionPrompt.trim() ? "Generate" : "Add Asset",
+      statusLabel: "Generate",
       statusColor: "cyan" as const,
       summary: transition.transitionPrompt.trim()
         ? "The current frame pair is ready for a fresh clip."
-        : "Add or generate a compatible clip for this cut.",
+        : "Generate a compatible clip for this cut.",
     };
   }
 

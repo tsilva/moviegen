@@ -308,10 +308,10 @@ export function getTransitionCardMeta(transition: TransitionView, selectedGaller
       title: getTransitionLabel(transition),
       prompt,
       promptPlaceholder,
-      statusLabel: promptPlaceholder ? "Add Asset" : "Generate",
+      statusLabel: "Generate",
       statusColor: "cyan",
       summary: promptPlaceholder
-        ? "Generate a clip for the latest frame pair. Add an optional prompt in the modal if you want to direct the move."
+        ? "Generate a clip for the latest frame pair. Add an optional prompt in the panel if you want to direct the move."
         : "The current frame pair is ready. Generate a fresh clip for the latest cut.",
       action: { intent: "generate", label: "Generate Clip", color: "cyan" },
     };
