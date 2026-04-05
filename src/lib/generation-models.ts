@@ -4,7 +4,8 @@ export const DEFAULT_SYSTEM_PROMPT_TEMPLATE = "{{prompt}}";
 export const SYSTEM_PROMPT_TEMPLATE_TOKEN = "{{prompt}}";
 export const PRO_FRAME_MODEL_ID = "alibaba/wan-2.7-pro/image-edit";
 export const STANDARD_FRAME_MODEL_ID = "alibaba/wan-2.7/image-edit";
-export const DEFAULT_FRAME_MODEL_ID = STANDARD_FRAME_MODEL_ID;
+export const QWEN_FRAME_MODEL_ID = "qwen/qwen-image-2.0/edit";
+export const DEFAULT_FRAME_MODEL_ID = QWEN_FRAME_MODEL_ID;
 export const SEEDANCE_TRANSITION_MODEL_ID = "bytedance/seedance-v1.5-pro/image-to-video";
 export const WAN_TRANSITION_MODEL_ID = "alibaba/wan-2.7/image-to-video";
 export const DEFAULT_TRANSITION_MODEL_ID = SEEDANCE_TRANSITION_MODEL_ID;
@@ -86,6 +87,20 @@ export const MODEL_REGISTRY: Record<string, GenerationModelDefinition> = {
   [STANDARD_FRAME_MODEL_ID]: {
     id: STANDARD_FRAME_MODEL_ID,
     label: "Wan 2.7 Image Edit",
+    assetKind: "frame",
+    settings: [
+      {
+        key: "resolution",
+        label: "Resolution",
+        kind: "select",
+        defaultValue: "720p",
+        options: FRAME_RESOLUTION_OPTIONS,
+      },
+    ],
+  },
+  [QWEN_FRAME_MODEL_ID]: {
+    id: QWEN_FRAME_MODEL_ID,
+    label: "Qwen Image 2.0 Edit",
     assetKind: "frame",
     settings: [
       {
