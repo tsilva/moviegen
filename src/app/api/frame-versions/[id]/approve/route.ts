@@ -19,6 +19,7 @@ export async function POST(
       }
 
       frame.approvedVersionId = version.id;
+      frame.transitionEndpointSelected = true;
       frame.updatedAt = new Date().toISOString();
       version.reviewerDecision = "approved";
       version.reviewerNotes = body.reviewerNotes ?? "";

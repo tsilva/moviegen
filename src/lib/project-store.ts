@@ -202,15 +202,25 @@ export async function clearProject(projectPathInput: string) {
   const projectPath = resolveProjectPath(projectPathInput);
 
   const manifest = await withProjectLock(projectPath, async () => {
-    await Promise.all([
-      fs.rm(getManifestPath(projectPath), { force: true }),
-      ...PROJECT_CONTENT_DIRECTORIES.map((directory) =>
+    const existingManifest = await loadManifest(projectPath).catch(() => createEmptyManifest(path.basename(projectPath)));
+
+    await Promise.all(
+      PROJECT_CONTENT_DIRECTORIES.map((directory) =>
         fs.rm(path.join(projectPath, directory), { recursive: true, force: true }),
       ),
-    ]);
+    );
 
     await ensureProjectDirectories(projectPath);
-    const nextManifest = createEmptyManifest(path.basename(projectPath));
+    const nextManifest: ProjectManifest = {
+      ...existingManifest,
+      frames: [],
+      transitions: [],
+      jobs: [],
+      ui: {
+        ...existingManifest.ui,
+        selectedSlot: null,
+      },
+    };
     await saveManifest(projectPath, nextManifest);
     getRuntimeState().undoStacks.delete(projectPath);
     return nextManifest;

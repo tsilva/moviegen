@@ -309,6 +309,47 @@ describe("frame job anchoring", () => {
     expect(snapshot.manifest.frames[0]?.usePreviousFrameAsReference).toBe(true);
   });
 
+  test("anchors to the approved current version of the previous frame instead of its latest candidate", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    const approvedPath = path.join("frames", "first", "selected.png");
+    const latestCandidatePath = path.join("frames", "first", "latest-candidate.png");
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const second = createFrame("Second", 1);
+      const approvedVersion = createFrameVersion(approvedPath, {
+        reviewerDecision: "approved",
+      });
+      const latestCandidate = createFrameVersion(latestCandidatePath);
+      first.versions.push(approvedVersion, latestCandidate);
+      first.approvedVersionId = approvedVersion.id;
+      second.usePreviousFrameAsReference = true;
+      draft.frames = [first, second];
+      return draft;
+    });
+
+    await enqueueFrameGeneration([manifest.frames[1]!.id], {
+      candidateCount: 1,
+      size: "1280x720",
+      seedMode: "random",
+    });
+
+    await waitForFrameJobToSettle(projectPath);
+
+    expect(generateFrameImagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceImages: [approvedPath],
+      }),
+    );
+    expect(generateFrameImagesMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceImages: [latestCandidatePath],
+      }),
+    );
+  });
+
   test("first generated frame auto-approves itself", async () => {
     const projectPath = await createTempProject();
     tempDirs.push(projectPath);
@@ -1481,9 +1522,10 @@ describe("frame job anchoring", () => {
     );
   });
 
-  test("stale dependent frames are not treated as current transition endpoints", async () => {
+  test("stale dependent target frames can be regenerated from a single-ended transition", async () => {
     const projectPath = await createTempProject();
     tempDirs.push(projectPath);
+    const lastFramePath = path.join("frames", "second", "derived.png");
 
     const manifest = await seedProject(projectPath, () => {
       const draft = createEmptyManifest("moviegen");
@@ -1510,13 +1552,86 @@ describe("frame job anchoring", () => {
       return draft;
     });
 
-    await expect(
-      enqueueTransitionGeneration([manifest.transitions[0]!.id], {
-        duration: 4,
-        size: "1280x720",
-        fps: 24,
+    generateTransitionVideoMock.mockResolvedValueOnce({
+      model: "mock-video-model",
+      providerPredictionId: "pred_transition_single_ended",
+      relativePath: path.join("transitions", "generated", "single-ended.mp4"),
+      posterRelativePath: path.join("transitions", "generated", "single-ended-poster.png"),
+      lastFrameRelativePath: lastFramePath,
+      inputPayload: { model: "mock-video-model", step: "single-ended" },
+      responsePayload: { id: "pred_transition_single_ended", status: "completed" },
+    });
+
+    const queuedSnapshot = await enqueueTransitionGeneration([manifest.transitions[0]!.id], {
+      duration: 4,
+      size: "1280x720",
+      fps: 24,
+    });
+
+    expect(queuedSnapshot.manifest.transitions[0]?.confirmedFromVersionId).toBe(
+      manifest.frames[0]!.approvedVersionId,
+    );
+    expect(queuedSnapshot.manifest.transitions[0]?.confirmedToVersionId).toBeNull();
+
+    const settledSnapshot = await waitForTransitionJobToSettle(projectPath);
+
+    expect(generateTransitionVideoMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fromImagePath: path.join("frames", "first", "new.png"),
+        toImagePath: null,
+        targetFrameId: manifest.frames[1]!.id,
       }),
-    ).rejects.toThrow(/Both endpoint frames need at least one generated version/i);
+    );
+    expect(settledSnapshot.frames[1]?.currentVersion?.outputPath).toBe(lastFramePath);
+    expect(settledSnapshot.transitions[0]?.currentVideo?.toApprovedVersionId).toBe(
+      settledSnapshot.frames[1]?.currentVersion?.id,
+    );
+  });
+
+  test("explicitly unselected target frames are omitted from transition generation", async () => {
+    const projectPath = await createTempProject();
+    tempDirs.push(projectPath);
+
+    const firstPath = path.join("frames", "first", "approved.png");
+    const secondPath = path.join("frames", "second", "approved.png");
+
+    const manifest = await seedProject(projectPath, () => {
+      const draft = createEmptyManifest("moviegen");
+      const first = createFrame("First", 0);
+      const second = createFrame("Second", 1);
+      const firstVersion = createFrameVersion(firstPath);
+      const secondVersion = createFrameVersion(secondPath);
+      first.versions.push(firstVersion);
+      second.versions.push(secondVersion);
+      first.approvedVersionId = firstVersion.id;
+      second.approvedVersionId = secondVersion.id;
+      second.transitionEndpointSelected = false;
+      draft.frames = [first, second];
+      reconcileTransitions(draft);
+      draft.transitions[0]!.transitionPrompt = "Single-ended by choice";
+      return draft;
+    });
+
+    const queuedSnapshot = await enqueueTransitionGeneration([manifest.transitions[0]!.id], {
+      duration: 4,
+      size: "1280x720",
+      fps: 24,
+    });
+
+    expect(queuedSnapshot.manifest.transitions[0]?.confirmedFromVersionId).toBe(
+      manifest.frames[0]!.approvedVersionId,
+    );
+    expect(queuedSnapshot.manifest.transitions[0]?.confirmedToVersionId).toBeNull();
+
+    await waitForTransitionJobToSettle(projectPath);
+
+    expect(generateTransitionVideoMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fromImagePath: firstPath,
+        toImagePath: null,
+        targetFrameId: manifest.frames[1]!.id,
+      }),
+    );
   });
 
   test("transition generation uses refreshed current endpoints after the chain is repaired", async () => {

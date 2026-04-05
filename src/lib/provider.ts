@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
@@ -27,6 +28,7 @@ export type GeneratedTransitionAsset = {
   providerPredictionId: string | null;
   relativePath: string;
   posterRelativePath: string;
+  lastFrameRelativePath?: string | null;
   inputPayload: Record<string, unknown>;
   responsePayload: unknown;
 };
@@ -47,10 +49,11 @@ type GenerateFrameImageInput = {
 type GenerateTransitionVideoInput = {
   projectPath: string;
   transitionId: string;
+  targetFrameId?: string | null;
   modelId: string;
   prompt: string;
   fromImagePath: string;
-  toImagePath: string;
+  toImagePath?: string | null;
   posterPath: string;
   duration: number;
   size: string;
@@ -174,6 +177,27 @@ function createAbortError(signal?: AbortSignal) {
   }
 
   return new DOMException("The operation was aborted", "AbortError");
+}
+
+function getProbeBinary() {
+  return process.env.FFPROBE_PATH?.trim() || "ffprobe";
+}
+
+function getFfmpegBinary() {
+  return process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+}
+
+async function runCommand(file: string, args: string[], signal?: AbortSignal) {
+  return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+    execFile(file, args, { signal }, (error, stdout, stderr) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve({ stdout, stderr });
+    });
+  });
 }
 
 function throwIfAborted(signal?: AbortSignal) {
@@ -365,6 +389,55 @@ async function persistGeneratedAsset(
   return relativePath;
 }
 
+async function probeVideoDurationSeconds(absolutePath: string, signal?: AbortSignal) {
+  const { stdout } = await runCommand(
+    getProbeBinary(),
+    [
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      absolutePath,
+    ],
+    signal,
+  );
+
+  const parsed = Number(stdout.trim());
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+async function extractLastFrameAsset(
+  projectPath: string,
+  videoRelativePath: string,
+  frameId: string,
+  signal?: AbortSignal,
+) {
+  const absoluteVideoPath = path.join(projectPath, videoRelativePath);
+  const relativePath = path.join("frames", frameId, `${Date.now()}_transition-last-frame.png`);
+  const absoluteOutputPath = path.join(projectPath, relativePath);
+  const durationSeconds = await probeVideoDurationSeconds(absoluteVideoPath, signal);
+  const seekOffsetSeconds = durationSeconds != null ? Math.max(durationSeconds - 0.1, 0) : null;
+
+  await fs.mkdir(path.dirname(absoluteOutputPath), { recursive: true });
+  await runCommand(
+    getFfmpegBinary(),
+    [
+      "-y",
+      ...(seekOffsetSeconds != null ? ["-ss", seekOffsetSeconds.toFixed(3)] : []),
+      "-i",
+      absoluteVideoPath,
+      "-frames:v",
+      "1",
+      absoluteOutputPath,
+    ],
+    signal,
+  );
+
+  return relativePath;
+}
+
 function buildResponsePayload(initial: AtlasGenerationResponse, settled: AtlasGenerationResponse) {
   if (initial === settled) {
     return initial;
@@ -448,7 +521,9 @@ export async function generateTransitionVideo(
 ): Promise<GeneratedTransitionAsset> {
   const [fromImage, toImage] = await Promise.all([
     ensureRemoteReference(input.projectPath, input.fromImagePath, input.signal),
-    ensureRemoteReference(input.projectPath, input.toImagePath, input.signal),
+    input.toImagePath
+      ? ensureRemoteReference(input.projectPath, input.toImagePath, input.signal)
+      : Promise.resolve(null),
   ]);
   const settings = input.settings ?? {};
   const { width, height } = parseGenerationSize(input.size);
@@ -457,7 +532,6 @@ export async function generateTransitionVideo(
         model: input.modelId,
         prompt: input.prompt,
         image: fromImage,
-        last_image: toImage,
         width,
         height,
         duration: input.duration,
@@ -467,7 +541,6 @@ export async function generateTransitionVideo(
         model: input.modelId,
         prompt: input.prompt,
         image: fromImage,
-        last_image: toImage,
         width,
         height,
         resolution:
@@ -481,6 +554,10 @@ export async function generateTransitionVideo(
         generate_audio:
           typeof settings.generateAudio === "boolean" ? settings.generateAudio : getVideoGenerateAudioDefault(),
       };
+
+  if (toImage) {
+    requestPayload.last_image = toImage;
+  }
 
   const initial = await atlasRequest<AtlasGenerationResponse>("/model/generateVideo", {
     method: "POST",
@@ -513,12 +590,17 @@ export async function generateTransitionVideo(
     outputUrl,
     input.signal,
   );
+  const lastFrameRelativePath =
+    !input.toImagePath && input.targetFrameId
+      ? await extractLastFrameAsset(input.projectPath, relativePath, input.targetFrameId, input.signal)
+      : null;
 
   return {
     model: input.modelId || DEFAULT_TRANSITION_MODEL_ID,
     providerPredictionId: predictionId,
     relativePath,
     posterRelativePath: input.posterPath,
+    lastFrameRelativePath,
     inputPayload: requestPayload,
     responsePayload: buildResponsePayload(initial, settled),
   };

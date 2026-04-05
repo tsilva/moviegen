@@ -8,6 +8,7 @@ const requestSchema = z.object({
   imagePrompt: z.string().optional(),
   referenceImages: z.array(z.string()).optional(),
   usePreviousFrameAsReference: z.boolean().optional(),
+  transitionEndpointSelected: z.boolean().optional(),
   generationOverrides: z
     .object({
       modelId: z.string().nullable().optional(),
@@ -41,6 +42,10 @@ export async function PATCH(
 
       if (body.usePreviousFrameAsReference !== undefined) {
         frame.usePreviousFrameAsReference = body.usePreviousFrameAsReference;
+      }
+
+      if (body.transitionEndpointSelected !== undefined) {
+        frame.transitionEndpointSelected = body.transitionEndpointSelected;
       }
 
       if (body.generationOverrides !== undefined) {

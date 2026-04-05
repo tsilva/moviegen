@@ -3,9 +3,11 @@ import { createEmptyManifest } from "@/lib/project-ops";
 import type { FrameVersion, FrameView, TransitionVersion, TransitionView } from "@/lib/types";
 import {
   buildBulkFrameRows,
+  didEditorSelectionChange,
   getFrameCardMeta,
   getFrameDisplayPrompt,
   getFrameGenerationDraft,
+  getFrameOverrideDraft,
   getFrameRepairAction,
   hasActiveGenerationJobs,
   getSequenceNextStep,
@@ -13,6 +15,7 @@ import {
   getTransitionCardMeta,
   getTransitionDisplayPrompt,
   getTransitionGenerationDraft,
+  getTransitionOverrideDraft,
   reconcileGallerySelectionAfterSnapshot,
   shouldApplySyncedSnapshot,
   shouldAutoSelectGeneratedTile,
@@ -156,6 +159,11 @@ describe("movie creator frame helpers", () => {
     ).toBe(true);
   });
 
+  test("treats a polled refresh of the same entry as not changing selection", () => {
+    expect(didEditorSelectionChange("transition:transition_1", "transition:transition_1")).toBe(false);
+    expect(didEditorSelectionChange("transition:transition_1", "frame:frame_1")).toBe(true);
+  });
+
   test("shows the prompt for the selected gallery generation", () => {
     const selectedVersion = createVersion("framever_selected", {
       sourcePrompt: "Selected gallery prompt",
@@ -223,6 +231,36 @@ describe("movie creator frame helpers", () => {
       modelId: "alibaba/wan-2.7/image-edit",
       prompt: "Live frame prompt",
       settings: { resolution: "720p" },
+      systemPromptTemplate: "{{prompt}}",
+      usePreviousFrameAsReference: true,
+    });
+  });
+
+  test("uses saved frame overrides for the settings draft even when a gallery version is selected", () => {
+    const selectedVersion = createVersion("framever_selected", {
+      sourcePrompt: "Older generated prompt",
+      generationSnapshot: {
+        modelId: "alibaba/wan-2.7/image-edit",
+        systemPromptTemplate: "{{prompt}}",
+        settings: { resolution: "720p" },
+        resolvedPrompt: "Older generated prompt",
+      },
+    });
+    const frame = createFrameView({
+      imagePrompt: "Live frame prompt",
+      galleryVersions: [selectedVersion],
+      currentVersion: selectedVersion,
+      latestVersion: selectedVersion,
+      generationOverrides: {
+        modelId: "alibaba/wan-2.7-pro/image-edit",
+        settings: { resolution: "1080p" },
+      },
+    });
+
+    expect(getFrameOverrideDraft(frame)).toEqual({
+      modelId: "alibaba/wan-2.7-pro/image-edit",
+      prompt: "Live frame prompt",
+      settings: { resolution: "1080p" },
       systemPromptTemplate: "{{prompt}}",
       usePreviousFrameAsReference: true,
     });
@@ -366,6 +404,47 @@ describe("movie creator transition helpers", () => {
         duration: "4",
         generateAudio: true,
         resolution: "480p",
+      },
+      systemPromptTemplate: "{{prompt}}",
+    });
+  });
+
+  test("uses saved transition overrides for the settings draft even when a clip version is selected", () => {
+    const selectedVersion = createTransitionVersion("transitionver_selected", {
+      sourcePrompt: "Older generated transition prompt",
+      generationSnapshot: {
+        modelId: "bytedance/seedance-v1.5-pro/image-to-video",
+        systemPromptTemplate: "{{prompt}}",
+        settings: {
+          aspectRatio: "1:1",
+          cameraFixed: true,
+          duration: "4",
+          generateAudio: true,
+          resolution: "480p",
+        },
+        resolvedPrompt: "Older generated transition prompt",
+      },
+    });
+    const transition = createTransitionView({
+      transitionPrompt: "Live transition prompt",
+      galleryVersions: [selectedVersion],
+      latestVideoVersion: selectedVersion,
+      currentVideo: selectedVersion,
+      generationOverrides: {
+        modelId: "alibaba/wan-2.7/image-to-video",
+        settings: {
+          resolution: "1080p",
+          duration: "15",
+        },
+      },
+    });
+
+    expect(getTransitionOverrideDraft(transition)).toEqual({
+      modelId: "alibaba/wan-2.7/image-to-video",
+      prompt: "Live transition prompt",
+      settings: {
+        duration: "15",
+        resolution: "1080p",
       },
       systemPromptTemplate: "{{prompt}}",
     });

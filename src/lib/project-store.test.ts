@@ -180,11 +180,22 @@ describe("project store concurrency", () => {
     );
   });
 
-  test("clearing a project removes Moviegen-managed assets and recreates an empty manifest", async () => {
+  test("clearing a project removes Moviegen-managed assets while preserving project defaults", async () => {
     const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "moviegen-project-store-"));
     tempDirs.push(projectPath);
 
     const manifest = createEmptyManifest("moviegen");
+    manifest.generationDefaults.selectedModels.frame = "custom-frame-model";
+    manifest.generationDefaults.byModel["custom-frame-model"] = {
+      systemPromptTemplate: "Persist me",
+      settings: { guidance: 12 },
+    };
+    manifest.ui.viewMode = "play";
+    manifest.ui.filter = "all";
+    manifest.ui.selectedSlot = {
+      trackId: "track_123",
+      slotKind: "transition",
+    };
     manifest.frames = [createFrame("Opening shot", 0)];
     manifest.jobs.push(createJob(manifest.frames[0]!.id, "completed"));
     await saveManifest(projectPath, manifest);
@@ -199,10 +210,22 @@ describe("project store concurrency", () => {
     const snapshot = await clearProject(projectPath);
 
     expect(snapshot.projectPath).toBe(projectPath);
-    expect(snapshot.manifest.project.name).toBe(path.basename(projectPath));
+    expect(snapshot.manifest.project).toMatchObject({
+      id: manifest.project.id,
+      name: manifest.project.name,
+      createdAt: manifest.project.createdAt,
+      schemaVersion: manifest.project.schemaVersion,
+    });
+    expect(new Date(snapshot.manifest.project.updatedAt).getTime()).toBeGreaterThanOrEqual(
+      new Date(manifest.project.updatedAt).getTime(),
+    );
+    expect(snapshot.manifest.generationDefaults).toEqual(manifest.generationDefaults);
     expect(snapshot.manifest.frames).toEqual([]);
     expect(snapshot.manifest.transitions).toEqual([]);
     expect(snapshot.manifest.jobs).toEqual([]);
+    expect(snapshot.manifest.ui.viewMode).toBe("play");
+    expect(snapshot.manifest.ui.filter).toBe("all");
+    expect(snapshot.manifest.ui.selectedSlot).toBeNull();
     await expect(fs.access(path.join(projectPath, "moviegen.project.json"))).resolves.toBeUndefined();
     await expect(fs.access(path.join(projectPath, "frames"))).resolves.toBeUndefined();
     await expect(fs.access(path.join(projectPath, "transitions"))).resolves.toBeUndefined();

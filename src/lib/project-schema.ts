@@ -57,6 +57,7 @@ export const frameSchema = z.object({
   imagePrompt: z.string(),
   referenceImages: z.array(z.string()),
   usePreviousFrameAsReference: z.boolean().default(true),
+  transitionEndpointSelected: z.boolean().default(true),
   generationOverrides: generationOverridesSchema.default({}),
   approvedVersionId: z.string().nullable(),
   versions: z.array(frameVersionSchema),

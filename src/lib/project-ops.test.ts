@@ -103,6 +103,26 @@ describe("project transition reconciliation", () => {
     expect(snapshot.transitions[0]?.nextAction).toBe("generate");
   });
 
+  test("transitions block when the source frame is explicitly unselected", () => {
+    const manifest = createEmptyManifest("test");
+    const first = frame("A");
+    const second = frame("B");
+    const firstVersion = frameVersion("framever_a");
+    const secondVersion = frameVersion("framever_b");
+    first.versions.push(firstVersion);
+    second.versions.push(secondVersion);
+    first.transitionEndpointSelected = false;
+    manifest.frames = [first, second].map((item, index) => ({ ...item, position: index }));
+
+    reconcileTransitions(manifest);
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+    expect(snapshot.transitions).toHaveLength(1);
+    expect(snapshot.transitions[0]?.promptStatus).toBe("blocked");
+    expect(snapshot.transitions[0]?.nextAction).toBeNull();
+    expect(snapshot.transitions[0]?.disabledReason).toBe("Select a source frame asset before generating this clip");
+  });
+
   test("transition next action becomes generate without a prompt once endpoints are confirmed", () => {
     const manifest = createEmptyManifest("test");
     const first = frame("A");
@@ -111,6 +131,8 @@ describe("project transition reconciliation", () => {
     const secondVersion = frameVersion("framever_b");
     first.versions.push(firstVersion);
     second.versions.push(secondVersion);
+    first.approvedVersionId = firstVersion.id;
+    second.approvedVersionId = secondVersion.id;
     manifest.frames = [first, second].map((item, index) => ({ ...item, position: index }));
 
     reconcileTransitions(manifest);
@@ -120,6 +142,24 @@ describe("project transition reconciliation", () => {
     const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
     expect(snapshot.transitions[0]?.promptStatus).toBe("confirmed");
     expect(snapshot.transitions[0]?.nextAction).toBe("generate");
+  });
+
+  test("transition stays generatable when the target frame is still missing", () => {
+    const manifest = createEmptyManifest("test");
+    const first = frame("A");
+    const second = frame("B");
+    const firstVersion = frameVersion("framever_a");
+    first.versions.push(firstVersion);
+    first.approvedVersionId = firstVersion.id;
+    manifest.frames = [first, second].map((item, index) => ({ ...item, position: index }));
+
+    reconcileTransitions(manifest);
+    manifest.transitions[0]!.confirmedFromVersionId = firstVersion.id;
+
+    const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
+    expect(snapshot.transitions[0]?.promptStatus).toBe("confirmed");
+    expect(snapshot.transitions[0]?.nextAction).toBe("generate");
+    expect(snapshot.transitions[0]?.blockedByFrameIds).toEqual([]);
   });
 
   test("frame next actions require prompts before generation work", () => {
@@ -195,6 +235,8 @@ describe("project transition reconciliation", () => {
     const secondVersion = frameVersion("framever_b");
     first.versions.push(firstVersion);
     second.versions.push(secondVersion);
+    first.approvedVersionId = firstVersion.id;
+    second.approvedVersionId = secondVersion.id;
     manifest.frames = [first, second].map((item, index) => ({ ...item, position: index }));
 
     reconcileTransitions(manifest);
@@ -213,6 +255,8 @@ describe("project transition reconciliation", () => {
     const secondVersion = frameVersion("framever_b");
     first.versions.push(firstVersion);
     second.versions.push(secondVersion);
+    first.approvedVersionId = firstVersion.id;
+    second.approvedVersionId = secondVersion.id;
     manifest.frames = [first, second].map((item, index) => ({ ...item, position: index }));
 
     reconcileTransitions(manifest);
@@ -538,7 +582,7 @@ describe("project transition reconciliation", () => {
 
     const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
     expect(snapshot.transitions[0]?.nextAction).toBeNull();
-    expect(snapshot.transitions[0]?.disabledReason).toMatch(/Waiting on Frame 1 & Frame 2/i);
+    expect(snapshot.transitions[0]?.disabledReason).toMatch(/Waiting on Frame 1/i);
   });
 
   test("upstream frame changes mark the next anchored frame stale and the following frame blocked", () => {
@@ -638,13 +682,13 @@ describe("project transition reconciliation", () => {
 
     const snapshot = buildProjectSnapshot(manifest, "/tmp/project");
     expect(snapshot.transitions[0]?.videoStatus).toBe("stale");
-    expect(snapshot.transitions[0]?.blockedByFrameIds).toEqual([second.id]);
-    expect(snapshot.transitions[0]?.nextAction).toBeNull();
+    expect(snapshot.transitions[0]?.blockedByFrameIds).toEqual([]);
+    expect(snapshot.transitions[0]?.nextAction).toBe("generate");
     expect(snapshot.tracks[0]?.slots.startFrame.isStale).toBe(false);
     expect(snapshot.tracks[0]?.slots.endFrame.isStale).toBe(true);
     expect(snapshot.tracks[0]?.slots.endFrame.isBlocked).toBe(false);
     expect(snapshot.tracks[0]?.slots.transition.isStale).toBe(true);
-    expect(snapshot.tracks[0]?.slots.transition.isBlocked).toBe(true);
+    expect(snapshot.tracks[0]?.slots.transition.isBlocked).toBe(false);
   });
 
   test("builds one derived track per active transition with shared boundary frames", () => {

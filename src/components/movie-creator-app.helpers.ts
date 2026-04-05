@@ -104,6 +104,30 @@ export function getFrameGenerationDraft(
   };
 }
 
+export function getFrameOverrideDraft(
+  frame: FrameView,
+  generationDefaults?: ProjectGenerationDefaults | null,
+) {
+  const prompt = frame.imagePrompt ?? getFallbackFramePrompt(frame) ?? "";
+  const generationSnapshot = resolveGenerationConfig({
+    assetKind: "frame",
+    prompt,
+    generationDefaults: generationDefaults ?? null,
+    assetOverrides: frame.generationOverrides,
+  });
+  const usePreviousFrameAsReference = frame.position === 0
+    ? false
+    : frame.usePreviousFrameAsReference;
+
+  return {
+    prompt,
+    usePreviousFrameAsReference,
+    modelId: generationSnapshot.modelId,
+    systemPromptTemplate: generationSnapshot.systemPromptTemplate,
+    settings: generationSnapshot.settings,
+  };
+}
+
 export function getTransitionDisplayPrompt(transition: TransitionView, selectedGalleryTileId?: string) {
   const selectedPrompt = selectedGalleryTileId
     ? findTransitionVersionByTileId(transition, selectedGalleryTileId)?.sourcePrompt
@@ -139,12 +163,36 @@ export function getTransitionGenerationDraft(
   };
 }
 
+export function getTransitionOverrideDraft(
+  transition: TransitionView,
+  generationDefaults?: ProjectGenerationDefaults | null,
+) {
+  const prompt = transition.transitionPrompt ?? getFallbackTransitionPrompt(transition) ?? "";
+  const generationSnapshot = resolveGenerationConfig({
+    assetKind: "transition",
+    prompt,
+    generationDefaults: generationDefaults ?? null,
+    assetOverrides: transition.generationOverrides,
+  });
+
+  return {
+    prompt,
+    modelId: generationSnapshot.modelId,
+    systemPromptTemplate: generationSnapshot.systemPromptTemplate,
+    settings: generationSnapshot.settings,
+  };
+}
+
 export function shouldSyncEditorDraft(input: {
   isDirty: boolean;
   currentEntryKey: string | null;
   nextEntryKey: string;
 }) {
   return !input.isDirty || input.currentEntryKey !== input.nextEntryKey;
+}
+
+export function didEditorSelectionChange(currentEntryKey: string | null, nextEntryKey: string) {
+  return currentEntryKey !== nextEntryKey;
 }
 
 export function buildBulkFrameRows(promptInput: string, referenceImagePaths: string[]) {
@@ -236,7 +284,9 @@ function galleryKey(kind: "frame" | "transition", id: string) {
 }
 
 function getDefaultGalleryTileId(entry: GalleryEntry, addTileId: string) {
-  return "currentVersion" in entry ? entry.currentVersion?.id ?? addTileId : entry.currentVideo?.id ?? addTileId;
+  return "currentVersion" in entry
+    ? entry.transitionEndpointSelected === false ? addTileId : entry.currentVersion?.id ?? addTileId
+    : entry.currentVideo?.id ?? addTileId;
 }
 
 function reconcileGalleryEntrySelection(

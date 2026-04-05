@@ -4,6 +4,7 @@ import {
   buildProjectSnapshot,
   createId,
   getCurrentFrameVersionIdForManifest,
+  getSelectedFrameVersionIdForManifest,
   getApprovedFrameVersion,
   getLatestFrameVersion,
   isFrameVersionCurrentForState,
@@ -81,13 +82,13 @@ type ClaimedTransitionJob = {
   transition: Transition;
   projectPath: string;
   fromImagePath: string;
-  toImagePath: string;
+  toImagePath: string | null;
   posterPath: string;
   sourcePrompt: string;
   generationSnapshot: GenerationSnapshot;
   promptRevision: number;
   fromApprovedVersionId: string;
-  toApprovedVersionId: string;
+  toApprovedVersionId: string | null;
 };
 
 type PendingReferenceResolution =
@@ -109,9 +110,9 @@ type PendingTransitionResolution =
   | {
       status: "ready";
       fromApprovedVersionId: string;
-      toApprovedVersionId: string;
+      toApprovedVersionId: string | null;
       fromImagePath: string;
-      toImagePath: string;
+      toImagePath: string | null;
       posterPath: string;
     }
   | {
@@ -363,22 +364,17 @@ function resolveQueuedTransitionJob(
 
   const fromApprovedVersionId =
     queuedFromVersionId ??
-    getCurrentFrameVersionIdForManifest(manifest, transition.fromFrameId);
+    getSelectedFrameVersionIdForManifest(manifest, transition.fromFrameId);
   const toApprovedVersionId =
     queuedToVersionId ??
-    getCurrentFrameVersionIdForManifest(manifest, transition.toFrameId);
+    getSelectedFrameVersionIdForManifest(manifest, transition.toFrameId);
 
-  if (!fromApprovedVersionId || !toApprovedVersionId) {
-    const blockedFrames = [transition.fromFrameId, transition.toFrameId]
-      .map((frameId) => frameViewMap.get(frameId) ?? null)
-      .filter((frame): frame is FrameView => frame != null && frame.currentVersion == null);
-
-    const waitingOnActiveGeneration = blockedFrames.some(
-      (frame) =>
-        frame.status === "queued" ||
-        frame.status === "generating" ||
-        frame.status === "blocked_upstream",
-    );
+  if (!fromApprovedVersionId) {
+    const fromFrameView = frameViewMap.get(transition.fromFrameId) ?? null;
+    const waitingOnActiveGeneration =
+      fromFrameView?.status === "queued" ||
+      fromFrameView?.status === "generating" ||
+      fromFrameView?.status === "blocked_upstream";
 
     if (waitingOnActiveGeneration) {
       return {
@@ -388,17 +384,41 @@ function resolveQueuedTransitionJob(
 
     return {
       status: "error",
-      message: "Confirmed transition endpoints are missing",
+      message: "Confirmed source frame is missing",
     };
   }
 
   const fromVersion = fromFrame.versions.find((item) => item.id === fromApprovedVersionId) ?? null;
-  const toVersion = toFrame.versions.find((item) => item.id === toApprovedVersionId) ?? null;
+  const toVersion = toApprovedVersionId
+    ? toFrame.versions.find((item) => item.id === toApprovedVersionId) ?? null
+    : null;
 
-  if (!fromVersion || !toVersion) {
+  if (!fromVersion) {
     return {
       status: "error",
-      message: "Confirmed frame versions are missing",
+      message: "Confirmed source frame version is missing",
+    };
+  }
+
+  if (!toApprovedVersionId) {
+    const targetFrameHasPendingGeneration = manifest.jobs.some(
+      (pendingJob) =>
+        pendingJob.kind === "frame_image" &&
+        pendingJob.targetParentId === transition.toFrameId &&
+        (pendingJob.status === "queued" || pendingJob.status === "running"),
+    );
+
+    if (targetFrameHasPendingGeneration) {
+      return {
+        status: "waiting",
+      };
+    }
+  }
+
+  if (toApprovedVersionId && !toVersion) {
+    return {
+      status: "error",
+      message: "Confirmed target frame version is missing",
     };
   }
 
@@ -407,7 +427,7 @@ function resolveQueuedTransitionJob(
     fromApprovedVersionId,
     toApprovedVersionId,
     fromImagePath: fromVersion.outputPath,
-    toImagePath: toVersion.outputPath,
+    toImagePath: toVersion?.outputPath ?? null,
     posterPath: fromVersion.thumbnailPath,
   };
 }
@@ -595,7 +615,8 @@ async function completeTransitionJob(
   generationSnapshot: GenerationSnapshot,
   promptRevision: number,
   fromApprovedVersionId: string,
-  toApprovedVersionId: string,
+  toApprovedVersionId: string | null,
+  lastFrameRelativePath: string | null,
 ) {
   await mutateProject(projectPath, (manifest) => {
     const job = manifest.jobs.find((item) => item.id === jobId);
@@ -613,6 +634,78 @@ async function completeTransitionJob(
     }
 
     const timestamp = nowIso();
+    const toFrame = manifest.frames.find((item) => item.id === transition.toFrameId) ?? null;
+    let resolvedToApprovedVersionId = toApprovedVersionId;
+
+    if (!resolvedToApprovedVersionId) {
+      if (!toFrame) {
+        job.status = "error";
+        job.errorMessage = "Target frame not found";
+        job.updatedAt = timestamp;
+        job.completedAt = timestamp;
+        return;
+      }
+
+      if (!lastFrameRelativePath) {
+        job.status = "error";
+        job.errorMessage = "Transition generation did not produce a target frame";
+        job.updatedAt = timestamp;
+        job.completedAt = timestamp;
+        return;
+      }
+
+      const targetFrameVersionId = createId("framever");
+      const targetFrameVersion: FrameVersion = {
+        id: targetFrameVersionId,
+        model: generationSnapshot.modelId || model || VIDEO_MODEL,
+        inputPayload: {
+          mode: "transition_last_frame",
+          transitionId: transition.id,
+          sourceTransitionPath: relativePath,
+        },
+        responsePayload: {
+          type: "transition_last_frame",
+          sourceTransitionPath: relativePath,
+          outputPath: lastFrameRelativePath,
+        },
+        outputPath: lastFrameRelativePath,
+        thumbnailPath: lastFrameRelativePath,
+        generationJobId: job.id,
+        createdAt: timestamp,
+        reviewerDecision: "unreviewed",
+        reviewerNotes: "",
+        sourcePrompt,
+        usePreviousFrameAsReference: true,
+        dependencyFrameId: transition.fromFrameId,
+        dependencyVersionId: fromApprovedVersionId,
+      };
+
+      toFrame.versions.push(targetFrameVersion);
+      resolvedToApprovedVersionId = targetFrameVersionId;
+
+      const previousCurrentVersionId = getCurrentFrameVersionIdForManifest(
+        manifest,
+        transition.fromFrameId,
+      );
+      const shouldSelectGeneratedVersion = isFrameVersionCurrentForState(
+        toFrame,
+        targetFrameVersion,
+        previousCurrentVersionId,
+      );
+
+      if (shouldSelectGeneratedVersion) {
+        toFrame.approvedVersionId = targetFrameVersionId;
+        targetFrameVersion.reviewerDecision = "approved";
+        for (const sibling of toFrame.versions) {
+          if (sibling.id !== targetFrameVersionId && sibling.reviewerDecision === "approved") {
+            sibling.reviewerDecision = "rejected";
+          }
+        }
+      }
+
+      toFrame.updatedAt = timestamp;
+    }
+
     const versionId = createId("transitionver");
 
     job.targetId = versionId;
@@ -639,11 +732,14 @@ async function completeTransitionJob(
       sourcePrompt,
       promptRevision,
       fromApprovedVersionId,
-      toApprovedVersionId,
+      toApprovedVersionId: resolvedToApprovedVersionId,
       generationSnapshot,
     };
 
     transition.versions.push(version);
+    transition.confirmedFromVersionId = fromApprovedVersionId;
+    transition.confirmedToVersionId = resolvedToApprovedVersionId;
+    transition.invalidationReason = null;
 
     const currentFromEndpointVersionId = getCurrentFrameVersionIdForManifest(
       manifest,
@@ -672,6 +768,7 @@ async function completeTransitionJob(
     transition.updatedAt = timestamp;
   });
 
+  void runQueuedFrameJobs(projectPath);
   void runQueuedTransitionJobs(projectPath);
 }
 
@@ -787,6 +884,7 @@ async function runQueuedTransitionJobs(projectPath: string) {
         const asset = await generateTransitionVideo({
           projectPath,
           transitionId: claimed.transition.id,
+          targetFrameId: claimed.transition.toFrameId,
           modelId: claimed.generationSnapshot.modelId,
           prompt: claimed.generationSnapshot.resolvedPrompt,
           fromImagePath: claimed.fromImagePath,
@@ -813,6 +911,7 @@ async function runQueuedTransitionJobs(projectPath: string) {
           claimed.promptRevision,
           claimed.fromApprovedVersionId,
           claimed.toApprovedVersionId,
+          asset.lastFrameRelativePath ?? null,
         );
       } catch (error) {
         await failJob(
@@ -1150,11 +1249,11 @@ export async function enqueueTransitionGeneration(
       const sourcePrompt = overrides?.prompt ?? transition.transitionPrompt;
       const fromFrame = frameMap.get(transition.fromFrameId) ?? null;
       const toFrame = frameMap.get(transition.toFrameId) ?? null;
-      const fromEndpointVersionId = fromFrame ? getCurrentFrameVersionIdForManifest(manifest, fromFrame.id) : null;
-      const toEndpointVersionId = toFrame ? getCurrentFrameVersionIdForManifest(manifest, toFrame.id) : null;
+      const fromEndpointVersionId = fromFrame ? getSelectedFrameVersionIdForManifest(manifest, fromFrame.id) : null;
+      const toEndpointVersionId = toFrame ? getSelectedFrameVersionIdForManifest(manifest, toFrame.id) : null;
 
-      if (!fromEndpointVersionId || !toEndpointVersionId) {
-        throw new Error("Both endpoint frames need at least one generated version before generating a transition");
+      if (!fromEndpointVersionId) {
+        throw new Error("The source frame needs a usable asset before generating a transition");
       }
 
       transition.confirmedFromVersionId = fromEndpointVersionId;

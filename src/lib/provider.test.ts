@@ -2,6 +2,15 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
+
+const { execFileMock } = vi.hoisted(() => ({
+  execFileMock: vi.fn(),
+}));
+
+vi.mock("node:child_process", () => ({
+  execFile: execFileMock,
+}));
+
 import { generateTransitionVideo, parseGenerationSize } from "./provider";
 
 function jsonResponse(payload: unknown, status = 200) {
@@ -14,10 +23,13 @@ function jsonResponse(payload: unknown, status = 200) {
 describe("provider transition generation", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    execFileMock.mockReset();
     delete process.env.ATLASCLOUD_API_KEY;
     delete process.env.ATLAS_API_KEY;
     delete process.env.SEEDANCE_VIDEO_CAMERA_FIXED;
     delete process.env.SEEDANCE_VIDEO_GENERATE_AUDIO;
+    delete process.env.FFMPEG_PATH;
+    delete process.env.FFPROBE_PATH;
   });
 
   test("parses atlas size strings", () => {
@@ -270,5 +282,107 @@ describe("provider transition generation", () => {
       duration: 15,
       fps: 24,
     });
+  });
+
+  test("omits last_image and extracts the generated last frame when the target frame is missing", async () => {
+    process.env.ATLASCLOUD_API_KEY = "test-key";
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "moviegen-provider-"));
+    const fromImagePath = path.join(tempDir, "frames", "frame-a", "approved.png");
+
+    await fs.mkdir(path.dirname(fromImagePath), { recursive: true });
+    await fs.writeFile(fromImagePath, "from-image");
+
+    const videoBytes = Uint8Array.from([0, 1, 2, 3]);
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+      const url = String(input);
+
+      if (url === "https://api.atlascloud.ai/api/v1/model/uploadMedia") {
+        const form = init?.body;
+        const uploaded = form instanceof FormData ? form.get("file") : null;
+        const fileName = uploaded instanceof File ? uploaded.name : null;
+
+        if (uploaded instanceof File && fileName === "approved.png") {
+          return jsonResponse({ data: { download_url: "https://cdn.example/from.png" } });
+        }
+
+        throw new Error(`Unexpected upload payload for ${fileName ?? "unknown file"}`);
+      }
+
+      if (url === "https://api.atlascloud.ai/api/v1/model/generateVideo") {
+        return jsonResponse({ data: { id: "pred_456", status: "processing" } });
+      }
+
+      if (url === "https://api.atlascloud.ai/api/v1/model/prediction/pred_456") {
+        return jsonResponse({
+          data: {
+            id: "pred_456",
+            status: "completed",
+            outputs: ["https://cdn.example/transition.mp4"],
+          },
+        });
+      }
+
+      if (url === "https://cdn.example/transition.mp4") {
+        return new Response(videoBytes, {
+          status: 200,
+          headers: { "Content-Type": "video/mp4" },
+        });
+      }
+
+      throw new Error(`Unexpected fetch request: ${url}`);
+    });
+
+    execFileMock
+      .mockImplementationOnce((_file, _args, _options, callback) => {
+        callback(null, "4.0\n", "");
+      })
+      .mockImplementationOnce((_file, args, _options, callback) => {
+        const outputPath = String(args.at(-1));
+        fs.mkdir(path.dirname(outputPath), { recursive: true })
+          .then(() => fs.writeFile(outputPath, "last-frame"))
+          .then(() => callback(null, "", ""))
+          .catch((error) => callback(error as Error, "", ""));
+      });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const asset = await generateTransitionVideo({
+      projectPath: tempDir,
+      transitionId: "transition-1",
+      targetFrameId: "frame-b",
+      modelId: "bytedance/seedance-v1.5-pro/image-to-video",
+      prompt: "Push forward into the next shot.",
+      fromImagePath,
+      toImagePath: null,
+      posterPath: path.join("frames", "frame-a", "approved.png"),
+      duration: 4,
+      size: "1280x720",
+      fps: 24,
+      settings: {
+        resolution: "720p",
+        aspectRatio: "16:9",
+        cameraFixed: false,
+        generateAudio: true,
+      },
+    });
+
+    const generateVideoRequest = fetchMock.mock.calls[1];
+    expect(JSON.parse(String(generateVideoRequest?.[1]?.body))).toMatchObject({
+      model: "bytedance/seedance-v1.5-pro/image-to-video",
+      prompt: "Push forward into the next shot.",
+      image: "https://cdn.example/from.png",
+      width: 1280,
+      height: 720,
+      resolution: "720p",
+      aspect_ratio: "16:9",
+      duration: 4,
+      fps: 24,
+    });
+    expect(JSON.parse(String(generateVideoRequest?.[1]?.body))).not.toHaveProperty("last_image");
+    expect(asset.lastFrameRelativePath).toMatch(/^frames\/frame-b\/.+_transition-last-frame\.png$/);
+    expect(execFileMock).toHaveBeenCalledTimes(2);
+    expect(execFileMock.mock.calls[0]?.[0]).toBe("ffprobe");
+    expect(execFileMock.mock.calls[1]?.[0]).toBe("ffmpeg");
   });
 });

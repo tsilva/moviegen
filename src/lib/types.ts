@@ -66,6 +66,7 @@ export type Frame = {
   imagePrompt: string;
   referenceImages: string[];
   usePreviousFrameAsReference: boolean;
+  transitionEndpointSelected?: boolean;
   generationOverrides: GenerationOverrides;
   approvedVersionId: string | null;
   versions: FrameVersion[];

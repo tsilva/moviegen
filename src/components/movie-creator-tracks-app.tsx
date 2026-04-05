@@ -60,12 +60,15 @@ import {
   getModelsForAssetKind,
 } from "@/lib/generation-models";
 import {
+  didEditorSelectionChange,
   getFrameGenerationDraft,
+  getFrameOverrideDraft,
   hasActiveGenerationJobs,
   reconcileGallerySelectionAfterSnapshot,
   getSequenceNextStep,
   getSequenceOverviewStats,
   getTransitionGenerationDraft,
+  getTransitionOverrideDraft,
   shouldApplySyncedSnapshot,
   shouldSyncEditorDraft,
 } from "@/components/movie-creator-app.helpers";
@@ -419,6 +422,7 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
 }: AssetGalleryProps<TVersion>) {
   const [isDropActive, setIsDropActive] = useState(false);
   const canDropFiles = kind === "frame" && onDropFiles != null;
+  const showUnselectedTile = kind === "frame" && !pendingLabel;
 
   function containsDraggedFiles(event: React.DragEvent<HTMLElement>) {
     return Array.from(event.dataTransfer?.types ?? []).includes("Files");
@@ -625,6 +629,67 @@ function AssetGallery<TVersion extends FrameVersion | TransitionVersion>({
               </Box>
               <Text c="dimmed" size="xs" truncate>
                 {failedAsset.label}
+              </Text>
+            </Stack>
+          </Box>
+        ) : null}
+
+        {showUnselectedTile ? (
+          <Box
+            key={GALLERY_ADD_TILE_ID}
+            role="button"
+            tabIndex={0}
+            aria-label="Clear the selected frame asset"
+            onClick={() => onSelectVersion(GALLERY_ADD_TILE_ID)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onSelectVersion(GALLERY_ADD_TILE_ID);
+              }
+            }}
+            style={{
+              display: "block",
+              width: ENTRY_PREVIEW_WIDTH,
+              flex: `0 0 ${ENTRY_PREVIEW_WIDTH}px`,
+              borderRadius: 16,
+              border:
+                selectedTileId === GALLERY_ADD_TILE_ID
+                  ? "1px solid rgba(255, 166, 77, 0.72)"
+                  : "1px dashed rgba(255,255,255,0.18)",
+              background:
+                selectedTileId === GALLERY_ADD_TILE_ID
+                  ? "rgba(99, 63, 24, 0.28)"
+                  : "rgba(255,255,255,0.02)",
+              overflow: "hidden",
+              cursor: "pointer",
+            }}
+          >
+            <Stack gap="xs" p="xs">
+              <Flex
+                direction="column"
+                align="center"
+                justify="center"
+                gap="xs"
+                style={{
+                  aspectRatio: "16 / 9",
+                  borderRadius: 12,
+                  background: "rgba(255,255,255,0.03)",
+                  border: "1px dashed rgba(255,255,255,0.12)",
+                  padding: 16,
+                }}
+              >
+                <Badge color={selectedTileId === GALLERY_ADD_TILE_ID ? "orange" : "gray"} variant="light">
+                  No image
+                </Badge>
+                <Text fw={600} size="sm" ta="center">
+                  Unselected
+                </Text>
+                <Text c="dimmed" size="xs" ta="center">
+                  Transition generation will not use this frame until you select an asset.
+                </Text>
+              </Flex>
+              <Text c="dimmed" size="xs" truncate>
+                Clear the selected frame asset
               </Text>
             </Stack>
           </Box>
@@ -1479,8 +1544,14 @@ export function MovieCreatorApp({
   const selectedFrameGenerationDraft = selectedFrame
     ? getFrameGenerationDraft(selectedFrame, selectedFrameTileId, projectGenerationDefaults)
     : null;
+  const selectedFrameOverrideDraft = selectedFrame
+    ? getFrameOverrideDraft(selectedFrame, projectGenerationDefaults)
+    : null;
   const selectedTransitionGenerationDraft = selectedTransition
     ? getTransitionGenerationDraft(selectedTransition, selectedTransitionTileId, projectGenerationDefaults)
+    : null;
+  const selectedTransitionOverrideDraft = selectedTransition
+    ? getTransitionOverrideDraft(selectedTransition, projectGenerationDefaults)
     : null;
   const selectedFrameHasOverrides = selectedFrame ? hasGenerationOverrides(selectedFrame.generationOverrides) : false;
   const selectedTransitionHasOverrides = selectedTransition ? hasGenerationOverrides(selectedTransition.generationOverrides) : false;
@@ -1491,7 +1562,7 @@ export function MovieCreatorApp({
 
   function getDefaultGalleryTileId(entry: FrameView | TransitionView) {
     return "currentVersion" in entry
-      ? entry.currentVersion?.id ?? GALLERY_ADD_TILE_ID
+      ? entry.transitionEndpointSelected === false ? GALLERY_ADD_TILE_ID : entry.currentVersion?.id ?? GALLERY_ADD_TILE_ID
       : entry.currentVideo?.id ?? GALLERY_ADD_TILE_ID;
   }
 
@@ -1692,12 +1763,17 @@ export function MovieCreatorApp({
         return;
       }
 
+      const previousEntryKey = syncedEditorEntryKeyRef.current;
       syncedEditorEntryKeyRef.current = nextEntryKey;
+      const selectionChanged = didEditorSelectionChange(previousEntryKey, nextEntryKey);
 
       if (nextState.kind === "frame") {
         setFramePromptDraft(nextState.prompt);
         setFrameUsePreviousDraft(nextState.usePreviousFrameAsReference);
-        setFrameSettingsModalOpen(false);
+        if (selectionChanged) {
+          setFrameSettingsModalOpen(false);
+          setTransitionSettingsModalOpen(false);
+        }
         setFrameOverrideModelIdDraft(nextState.modelId);
         setFrameOverrideSystemPromptTemplateDraft(nextState.systemPromptTemplate);
         setFrameOverrideGenerationSettingsDraft(getDraftSettingsForModel(nextState.modelId, nextState.settings));
@@ -1707,7 +1783,10 @@ export function MovieCreatorApp({
       }
 
       setTransitionPromptDraft(nextState.prompt);
-      setTransitionSettingsModalOpen(false);
+      if (selectionChanged) {
+        setFrameSettingsModalOpen(false);
+        setTransitionSettingsModalOpen(false);
+      }
       setTransitionOverrideModelIdDraft(nextState.modelId);
       setTransitionOverrideSystemPromptTemplateDraft(nextState.systemPromptTemplate);
       setTransitionOverrideGenerationSettingsDraft(getDraftSettingsForModel(nextState.modelId, nextState.settings));
@@ -1922,7 +2001,7 @@ export function MovieCreatorApp({
   async function clearProjectState() {
     if (
       !window.confirm(
-        "Clear this project and delete all Moviegen entries and generated assets in this folder? This removes moviegen.project.json, frames/, transitions/, and deleted/, then recreates an empty project.",
+        "Clear this project and delete all Moviegen tracks plus generated assets in this folder? This keeps Global Settings and clears the sequence along with frames/, transitions/, and deleted/.",
       )
     ) {
       return;
@@ -2287,28 +2366,28 @@ export function MovieCreatorApp({
   }
 
   function openSelectedFrameSettings() {
-    if (!selectedFrameGenerationDraft) {
+    if (!selectedFrameOverrideDraft) {
       return;
     }
 
-    setFrameOverrideModelIdDraft(selectedFrameGenerationDraft.modelId);
-    setFrameOverrideSystemPromptTemplateDraft(selectedFrameGenerationDraft.systemPromptTemplate);
+    setFrameOverrideModelIdDraft(selectedFrameOverrideDraft.modelId);
+    setFrameOverrideSystemPromptTemplateDraft(selectedFrameOverrideDraft.systemPromptTemplate);
     setFrameOverrideGenerationSettingsDraft(
-      getDraftSettingsForModel(selectedFrameGenerationDraft.modelId, selectedFrameGenerationDraft.settings),
+      getDraftSettingsForModel(selectedFrameOverrideDraft.modelId, selectedFrameOverrideDraft.settings),
     );
     setFrameSettingsModalOpen(true);
   }
 
   function closeSelectedFrameSettings() {
     setFrameSettingsModalOpen(false);
-    if (!selectedFrameGenerationDraft) {
+    if (!selectedFrameOverrideDraft) {
       return;
     }
 
-    setFrameOverrideModelIdDraft(selectedFrameGenerationDraft.modelId);
-    setFrameOverrideSystemPromptTemplateDraft(selectedFrameGenerationDraft.systemPromptTemplate);
+    setFrameOverrideModelIdDraft(selectedFrameOverrideDraft.modelId);
+    setFrameOverrideSystemPromptTemplateDraft(selectedFrameOverrideDraft.systemPromptTemplate);
     setFrameOverrideGenerationSettingsDraft(
-      getDraftSettingsForModel(selectedFrameGenerationDraft.modelId, selectedFrameGenerationDraft.settings),
+      getDraftSettingsForModel(selectedFrameOverrideDraft.modelId, selectedFrameOverrideDraft.settings),
     );
   }
 
@@ -2378,28 +2457,28 @@ export function MovieCreatorApp({
   }
 
   function openSelectedTransitionSettings() {
-    if (!selectedTransitionGenerationDraft) {
+    if (!selectedTransitionOverrideDraft) {
       return;
     }
 
-    setTransitionOverrideModelIdDraft(selectedTransitionGenerationDraft.modelId);
-    setTransitionOverrideSystemPromptTemplateDraft(selectedTransitionGenerationDraft.systemPromptTemplate);
+    setTransitionOverrideModelIdDraft(selectedTransitionOverrideDraft.modelId);
+    setTransitionOverrideSystemPromptTemplateDraft(selectedTransitionOverrideDraft.systemPromptTemplate);
     setTransitionOverrideGenerationSettingsDraft(
-      getDraftSettingsForModel(selectedTransitionGenerationDraft.modelId, selectedTransitionGenerationDraft.settings),
+      getDraftSettingsForModel(selectedTransitionOverrideDraft.modelId, selectedTransitionOverrideDraft.settings),
     );
     setTransitionSettingsModalOpen(true);
   }
 
   function closeSelectedTransitionSettings() {
     setTransitionSettingsModalOpen(false);
-    if (!selectedTransitionGenerationDraft) {
+    if (!selectedTransitionOverrideDraft) {
       return;
     }
 
-    setTransitionOverrideModelIdDraft(selectedTransitionGenerationDraft.modelId);
-    setTransitionOverrideSystemPromptTemplateDraft(selectedTransitionGenerationDraft.systemPromptTemplate);
+    setTransitionOverrideModelIdDraft(selectedTransitionOverrideDraft.modelId);
+    setTransitionOverrideSystemPromptTemplateDraft(selectedTransitionOverrideDraft.systemPromptTemplate);
     setTransitionOverrideGenerationSettingsDraft(
-      getDraftSettingsForModel(selectedTransitionGenerationDraft.modelId, selectedTransitionGenerationDraft.settings),
+      getDraftSettingsForModel(selectedTransitionOverrideDraft.modelId, selectedTransitionOverrideDraft.settings),
     );
   }
 
@@ -2474,15 +2553,52 @@ export function MovieCreatorApp({
   ]);
 
   async function selectFrameVersion(frame: FrameView, versionId: string) {
+    const endpointSelected = frame.transitionEndpointSelected !== false;
+    const nextVersionId =
+      versionId === frame.approvedVersion?.id && frame.hasCurrentApproval && endpointSelected ? GALLERY_ADD_TILE_ID : versionId;
     const previousTileId = getSelectedGalleryTileId(frame);
-    setSelectedGalleryTile("frame", frame.id, versionId);
+    setSelectedGalleryTile("frame", frame.id, nextVersionId);
 
-    if (versionId === frame.currentVersion?.id) {
+    if (nextVersionId === GALLERY_ADD_TILE_ID) {
+      const cleared = await mutate(
+        `/api/frames/${frame.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            transitionEndpointSelected: false,
+          }),
+        },
+        "Frame asset cleared",
+      );
+
+      if (!cleared) {
+        setSelectedGalleryTile("frame", frame.id, previousTileId);
+      }
+      return;
+    }
+
+    if (versionId === frame.approvedVersion?.id && frame.hasCurrentApproval && !endpointSelected) {
+      const restored = await mutate(
+        `/api/frames/${frame.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            transitionEndpointSelected: true,
+          }),
+        },
+        "Current frame updated",
+      );
+
+      if (!restored) {
+        setSelectedGalleryTile("frame", frame.id, previousTileId);
+      }
       return;
     }
 
     const approved = await mutate(
-      `/api/frame-versions/${versionId}/approve`,
+      `/api/frame-versions/${nextVersionId}/approve`,
       { method: "POST" },
       "Current frame updated",
     );
@@ -2824,7 +2940,7 @@ export function MovieCreatorApp({
                               maxRows={4}
                               autoComplete="off"
                             />
-                            {selectedFrameGenerationDraft ? (
+                            {selectedFrameOverrideDraft ? (
                               <Box
                                 p="sm"
                                 style={{
@@ -2853,12 +2969,12 @@ export function MovieCreatorApp({
                                     </Button>
                                   </Group>
                                   <Text fw={600} size="sm">
-                                    {getModelDefinition(selectedFrameGenerationDraft.modelId)?.label ?? selectedFrameGenerationDraft.modelId}
+                                    {getModelDefinition(selectedFrameOverrideDraft.modelId)?.label ?? selectedFrameOverrideDraft.modelId}
                                   </Text>
                                   <Text c="dimmed" size="xs">
                                     {formatGenerationSettingsSummary(
-                                      selectedFrameGenerationDraft.modelId,
-                                      selectedFrameGenerationDraft.settings,
+                                      selectedFrameOverrideDraft.modelId,
+                                      selectedFrameOverrideDraft.settings,
                                     )}
                                   </Text>
                                 </Stack>
@@ -2966,7 +3082,7 @@ export function MovieCreatorApp({
                               maxRows={4}
                               autoComplete="off"
                             />
-                            {selectedTransitionGenerationDraft ? (
+                            {selectedTransitionOverrideDraft ? (
                               <Box
                                 p="sm"
                                 style={{
@@ -2995,12 +3111,12 @@ export function MovieCreatorApp({
                                     </Button>
                                   </Group>
                                   <Text fw={600} size="sm">
-                                    {getModelDefinition(selectedTransitionGenerationDraft.modelId)?.label ?? selectedTransitionGenerationDraft.modelId}
+                                    {getModelDefinition(selectedTransitionOverrideDraft.modelId)?.label ?? selectedTransitionOverrideDraft.modelId}
                                   </Text>
                                   <Text c="dimmed" size="xs">
                                     {formatGenerationSettingsSummary(
-                                      selectedTransitionGenerationDraft.modelId,
-                                      selectedTransitionGenerationDraft.settings,
+                                      selectedTransitionOverrideDraft.modelId,
+                                      selectedTransitionOverrideDraft.settings,
                                     )}
                                   </Text>
                                 </Stack>
@@ -3133,6 +3249,7 @@ export function MovieCreatorApp({
               return null;
             }
             const models = getModelsForAssetKind(assetKind);
+            const selectedConfig = getProjectModelConfigDraft(projectGenerationDefaultsDraft, selectedModelId);
 
             return (
               <Card key={assetKind} withBorder radius="lg" p="md">
@@ -3150,50 +3267,41 @@ export function MovieCreatorApp({
                     }}
                   />
                   <Divider />
-                  {models.map((model) => {
-                    const config = getProjectModelConfigDraft(projectGenerationDefaultsDraft, model.id);
-
-                    return (
-                      <Card key={model.id} withBorder radius="md" p="sm">
-                        <Stack gap="sm">
-                          <Group justify="space-between" align="flex-start">
-                            <div>
-                              <Text fw={600}>{model.label}</Text>
-                              <Text c="dimmed" size="sm">
-                                {model.id === selectedModelId ? "Currently selected by default" : "Saved when this model is chosen"}
-                              </Text>
-                            </div>
-                            {model.id === selectedModelId ? <Badge color="blue">Default</Badge> : null}
-                          </Group>
-                          <GenerationConfigFields
-                            assetKind={assetKind}
-                            modelId={model.id}
-                            systemPromptTemplate={config.systemPromptTemplate}
-                            settings={getDraftSettingsForModel(model.id, config.settings)}
-                            showModelSelect={false}
-                            onModelIdChange={(modelId) => {
-                              updateProjectSelectedModelDraft(assetKind, modelId);
-                            }}
-                            onSystemPromptTemplateChange={(value) => {
-                              updateProjectGenerationDefaultsDraft(model.id, (current) => ({
-                                ...current,
-                                systemPromptTemplate: value,
-                              }));
-                            }}
-                            onSettingChange={(key, value) => {
-                              updateProjectGenerationDefaultsDraft(model.id, (current) => ({
-                                ...current,
-                                settings: {
-                                  ...current.settings,
-                                  [key]: value,
-                                },
-                              }));
-                            }}
-                          />
-                        </Stack>
-                      </Card>
-                    );
-                  })}
+                  <Card withBorder radius="md" p="sm">
+                    <Stack gap="sm">
+                      <div>
+                        <Text fw={600}>{selectedModel.label}</Text>
+                        <Text c="dimmed" size="sm">
+                          Settings for the currently selected default model
+                        </Text>
+                      </div>
+                      <GenerationConfigFields
+                        assetKind={assetKind}
+                        modelId={selectedModelId}
+                        systemPromptTemplate={selectedConfig.systemPromptTemplate}
+                        settings={getDraftSettingsForModel(selectedModelId, selectedConfig.settings)}
+                        showModelSelect={false}
+                        onModelIdChange={(modelId) => {
+                          updateProjectSelectedModelDraft(assetKind, modelId);
+                        }}
+                        onSystemPromptTemplateChange={(value) => {
+                          updateProjectGenerationDefaultsDraft(selectedModelId, (current) => ({
+                            ...current,
+                            systemPromptTemplate: value,
+                          }));
+                        }}
+                        onSettingChange={(key, value) => {
+                          updateProjectGenerationDefaultsDraft(selectedModelId, (current) => ({
+                            ...current,
+                            settings: {
+                              ...current.settings,
+                              [key]: value,
+                            },
+                          }));
+                        }}
+                      />
+                    </Stack>
+                  </Card>
                 </Stack>
               </Card>
             );
