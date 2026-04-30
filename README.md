@@ -1,42 +1,51 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# moviegen
 
-## Getting Started
+moviegen is a local Next.js workspace for planning and generating short frame-to-frame movie sequences. It lets you write frame prompts, attach reference images, generate still frames and transition clips through Atlas Cloud, review versions, approve the best assets, and render a final MP4.
 
-First, run the development server:
+Projects are stored in a folder outside this repository. The app keeps a JSON manifest plus generated media assets in that project folder, while the repo stays focused on the editor, API routes, generation pipeline, and tests.
+
+## Install
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
+cp .env.example .env
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-To open a project automatically on boot, set `MOVIEGEN_PROJECT_PATH` to an absolute path outside this repository before starting the app:
+To open a project automatically on startup, set `MOVIEGEN_PROJECT_PATH` to an absolute path outside this repository:
 
 ```bash
 MOVIEGEN_PROJECT_PATH=/absolute/path/to/moviegen-project pnpm dev
 ```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Commands
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+pnpm dev             # start the local Next.js app
+pnpm build           # build the production app
+pnpm start           # run the production build
+pnpm lint            # run ESLint
+pnpm test            # run Vitest tests
+pnpm check:no-media  # check git history for committed media files
+```
 
-## Learn More
+## Notes
 
-To learn more about Next.js, take a look at the following resources:
+- Use `pnpm`; this repo includes `pnpm-lock.yaml` and `pnpm-workspace.yaml`.
+- `.env` is ignored. Start from `.env.example` and fill in real credentials.
+- `ATLAS_API_KEY` or `ATLASCLOUD_API_KEY` is required for Atlas Cloud generation.
+- `ATLAS_BASE_URL`, model IDs, Seedance defaults, `FFMPEG_PATH`, and `FFPROBE_PATH` can be overridden with environment variables.
+- Project paths must be absolute and outside the app workspace.
+- Project folders contain `manifest.json`, `frames/`, `transitions/`, `deleted/`, and final renders under `final/`.
+- Final video rendering uses `ffmpeg`; media probing uses `ffprobe`.
+- Generated media should not be committed. `architecture.png` is the only tracked PNG allowed by the media guard.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Architecture
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+![moviegen architecture diagram](./architecture.png)
 
-## Deploy on Vercel
+## License
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+No license file is currently included.

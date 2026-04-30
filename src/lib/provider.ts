@@ -117,6 +117,10 @@ export function parseGenerationSize(size: string) {
   };
 }
 
+function isQwenImage2Model(modelId: string) {
+  return /^qwen\/qwen-image-2\.0(?:-pro)?(?:\/(?:edit|text-to-image))?$/.test(modelId);
+}
+
 function buildSeed(seedMode: string, iteration: number) {
   if (seedMode === "locked") {
     return iteration + 1;
@@ -457,19 +461,32 @@ export async function generateFrameImages(input: GenerateFrameImageInput): Promi
   const generatedAssets: GeneratedFrameAsset[] = [];
 
   for (let index = 0; index < input.candidateCount; index += 1) {
-    const requestPayload: Record<string, unknown> = {
-      model: requestModel,
-      prompt: input.prompt,
-      size: normalizeSize(input.size),
-      seed: input.seed ?? buildSeed(input.seedMode, index),
-    };
+    const requestPayload: Record<string, unknown> = isQwenImage2Model(requestModel)
+      ? {
+          model: requestModel,
+          prompt: input.prompt,
+          ...parseGenerationSize(input.size),
+          seed: input.seed ?? buildSeed(input.seedMode, index),
+        }
+      : {
+          model: requestModel,
+          prompt: input.prompt,
+          size: normalizeSize(input.size),
+          seed: input.seed ?? buildSeed(input.seedMode, index),
+        };
 
-    if (referenceImages.length === 1) {
-      requestPayload.image = referenceImages[0];
-    }
+    if (isQwenImage2Model(requestModel)) {
+      if (referenceImages.length > 0) {
+        requestPayload.images = referenceImages;
+      }
+    } else {
+      if (referenceImages.length === 1) {
+        requestPayload.image = referenceImages[0];
+      }
 
-    if (referenceImages.length > 1) {
-      requestPayload.images = referenceImages;
+      if (referenceImages.length > 1) {
+        requestPayload.images = referenceImages;
+      }
     }
 
     const initial = await atlasRequest<AtlasGenerationResponse>("/model/generateImage", {

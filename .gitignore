@@ -29,6 +29,7 @@ moviegen.project.json
 *.jpg
 *.jpeg
 *.mp4
+!/architecture.png
 
 # debug
 npm-debug.log*

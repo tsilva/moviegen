@@ -2,13 +2,14 @@
 set -eu
 
 media_pattern='\\.(png|jpe?g|mp4)$'
+allowed_media_pattern='^architecture\\.png$'
 
 list_history_hits() {
-  git log --all --name-only --format='' | awk 'NF' | rg "$media_pattern" || true
+  git log --all --name-only --format='' | awk 'NF' | rg "$media_pattern" | rg -v "$allowed_media_pattern" || true
 }
 
 list_staged_hits() {
-  git diff --cached --name-only --diff-filter=ACMR | awk 'NF' | rg "$media_pattern" || true
+  git diff --cached --name-only --diff-filter=ACMR | awk 'NF' | rg "$media_pattern" | rg -v "$allowed_media_pattern" || true
 }
 
 mode="${1:-history}"

@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { QWEN_FRAME_MODEL_ID } from "./generation-models";
 
 const { execFileMock } = vi.hoisted(() => ({
   execFileMock: vi.fn(),
@@ -11,7 +12,7 @@ vi.mock("node:child_process", () => ({
   execFile: execFileMock,
 }));
 
-import { generateTransitionVideo, parseGenerationSize } from "./provider";
+import { generateFrameImages, generateTransitionVideo, parseGenerationSize } from "./provider";
 
 function jsonResponse(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -384,5 +385,145 @@ describe("provider transition generation", () => {
     expect(execFileMock).toHaveBeenCalledTimes(2);
     expect(execFileMock.mock.calls[0]?.[0]).toBe("ffprobe");
     expect(execFileMock.mock.calls[1]?.[0]).toBe("ffmpeg");
+  });
+});
+
+describe("provider frame generation", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    execFileMock.mockReset();
+    delete process.env.ATLASCLOUD_API_KEY;
+    delete process.env.ATLAS_API_KEY;
+  });
+
+  test("uses Qwen Image 2.0 width and height parameters with reference images", async () => {
+    process.env.ATLASCLOUD_API_KEY = "test-key";
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "moviegen-provider-"));
+    const referencePath = path.join(tempDir, "frames", "frame-a", "approved.png");
+    await fs.mkdir(path.dirname(referencePath), { recursive: true });
+    await fs.writeFile(referencePath, "reference-image");
+
+    const imageBytes = Uint8Array.from([0, 1, 2, 3]);
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+      const url = String(input);
+
+      if (url === "https://api.atlascloud.ai/api/v1/model/uploadMedia") {
+        const form = init?.body;
+        const uploaded = form instanceof FormData ? form.get("file") : null;
+        const fileName = uploaded instanceof File ? uploaded.name : null;
+
+        if (uploaded instanceof File && fileName === "approved.png") {
+          return jsonResponse({ data: { download_url: "https://cdn.example/reference.png" } });
+        }
+
+        throw new Error(`Unexpected upload payload for ${fileName ?? "unknown file"}`);
+      }
+
+      if (url === "https://api.atlascloud.ai/api/v1/model/generateImage") {
+        return jsonResponse({
+          data: {
+            outputs: ["https://cdn.example/generated.png"],
+          },
+        });
+      }
+
+      if (url === "https://cdn.example/generated.png") {
+        return new Response(imageBytes, {
+          status: 200,
+          headers: { "Content-Type": "image/png" },
+        });
+      }
+
+      throw new Error(`Unexpected fetch request: ${url}`);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const [asset] = await generateFrameImages({
+      projectPath: tempDir,
+      frameId: "frame-2",
+      modelId: QWEN_FRAME_MODEL_ID,
+      prompt: "Keep the composition, but replace the sky with a storm front.",
+      referenceImages: [referencePath],
+      candidateCount: 1,
+      size: "1280x720",
+      seedMode: "locked",
+    });
+
+    const generateImageRequest = fetchMock.mock.calls[1];
+    expect(JSON.parse(String(generateImageRequest?.[1]?.body))).toEqual({
+      model: QWEN_FRAME_MODEL_ID,
+      prompt: "Keep the composition, but replace the sky with a storm front.",
+      width: 1280,
+      height: 720,
+      seed: 1,
+      images: ["https://cdn.example/reference.png"],
+    });
+    expect(asset.relativePath).toMatch(/^frames\/frame-2\/.+\.png$/);
+    expect(asset.inputPayload).toEqual({
+      model: QWEN_FRAME_MODEL_ID,
+      prompt: "Keep the composition, but replace the sky with a storm front.",
+      width: 1280,
+      height: 720,
+      seed: 1,
+      images: ["https://cdn.example/reference.png"],
+    });
+  });
+
+  test("uses the Qwen text-to-image variant with width and height when no references are present", async () => {
+    process.env.ATLASCLOUD_API_KEY = "test-key";
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "moviegen-provider-"));
+    const imageBytes = Uint8Array.from([0, 1, 2, 3]);
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input);
+
+      if (url === "https://api.atlascloud.ai/api/v1/model/generateImage") {
+        return jsonResponse({
+          data: {
+            outputs: ["https://cdn.example/generated.png"],
+          },
+        });
+      }
+
+      if (url === "https://cdn.example/generated.png") {
+        return new Response(imageBytes, {
+          status: 200,
+          headers: { "Content-Type": "image/png" },
+        });
+      }
+
+      throw new Error(`Unexpected fetch request: ${url}`);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const [asset] = await generateFrameImages({
+      projectPath: tempDir,
+      frameId: "frame-1",
+      modelId: QWEN_FRAME_MODEL_ID,
+      prompt: "A quiet street at dawn.",
+      referenceImages: [],
+      candidateCount: 1,
+      size: "1024x1024",
+      seedMode: "locked",
+    });
+
+    const generateImageRequest = fetchMock.mock.calls[0];
+    expect(JSON.parse(String(generateImageRequest?.[1]?.body))).toEqual({
+      model: "qwen/qwen-image-2.0",
+      prompt: "A quiet street at dawn.",
+      width: 1024,
+      height: 1024,
+      seed: 1,
+    });
+    expect(asset.inputPayload).toEqual({
+      model: "qwen/qwen-image-2.0",
+      prompt: "A quiet street at dawn.",
+      width: 1024,
+      height: 1024,
+      seed: 1,
+    });
   });
 });
