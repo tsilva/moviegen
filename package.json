@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/dev-server.mjs next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node scripts/dev-server.mjs next start",
     "lint": "eslint",
     "test": "vitest run",
     "check:no-media": "scripts/check-no-media.sh"
