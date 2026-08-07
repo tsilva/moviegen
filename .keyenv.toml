@@ -1,0 +1,7 @@
+# Credential references only. Store values with `keyenv set ENV_NAME`.
+[keyenv]
+version = 1
+
+[secrets.ATLAS_API_KEY]
+account = "moviegen/ATLAS_API_KEY"
+required = true
