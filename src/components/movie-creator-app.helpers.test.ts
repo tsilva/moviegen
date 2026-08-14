@@ -207,7 +207,7 @@ describe("movie creator frame helpers", () => {
     });
 
     expect(getFrameGenerationDraft(frame, selectedVersion.id)).toEqual({
-      modelId: "alibaba/wan-2.7/image-edit",
+      modelId: "qwen/qwen-image-2.0/edit",
       prompt: "Selected generation prompt",
       settings: { resolution: "720p" },
       systemPromptTemplate: "{{prompt}}",
@@ -228,7 +228,7 @@ describe("movie creator frame helpers", () => {
     });
 
     expect(getFrameGenerationDraft(frame, "__add__")).toEqual({
-      modelId: "alibaba/wan-2.7/image-edit",
+      modelId: "qwen/qwen-image-2.0/edit",
       prompt: "Live frame prompt",
       settings: { resolution: "720p" },
       systemPromptTemplate: "{{prompt}}",
