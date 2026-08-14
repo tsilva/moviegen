@@ -39,6 +39,7 @@ pnpm check:no-media  # check git history for committed media files
 - Private values declared in `.keyenv.toml` live in macOS Keychain and are injected with `keyenv run -- ...`; Node reads them through `process.env`.
 - `ATLAS_API_KEY` or `ATLASCLOUD_API_KEY` is required for Atlas Cloud generation; keep the active local key in Keychain rather than `.env`.
 - `ATLAS_BASE_URL`, model IDs, Seedance defaults, `FFMPEG_PATH`, and `FFPROBE_PATH` can be overridden with environment variables.
+- `NEXT_PUBLIC_GA_MEASUREMENT_ID` enables GA4 page-view tracking when configured.
 - Project paths must be absolute and outside the app workspace.
 - Project folders contain `manifest.json`, `frames/`, `transitions/`, `deleted/`, and final renders under `final/`.
 - Final video rendering uses `ffmpeg`; media probing uses `ffprobe`.
