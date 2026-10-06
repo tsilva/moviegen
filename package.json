@@ -4,15 +4,20 @@
   "private": true,
   "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "dev": "node scripts/dev-server.mjs next dev",
+    "dev": "python3 scripts/infisical/run.py dev",
     "build": "next build",
-    "start": "node scripts/dev-server.mjs next start",
+    "start": "python3 scripts/infisical/run.py start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test:dependencies": "node --test scripts/dependency-security.mjs",
     "test:unit": "vitest run",
     "test": "pnpm test:dependencies && pnpm test:unit",
-    "check:no-media": "scripts/check-no-media.sh"
+    "check:no-media": "scripts/check-no-media.sh",
+    "dev:app": "node scripts/dev-server.mjs next dev",
+    "start:app": "node scripts/dev-server.mjs next start",
+    "build:secrets": "python3 scripts/infisical/run.py build",
+    "secrets:check": "python3 scripts/infisical/run.py check",
+    "test:secrets": "python3 -m unittest discover -s scripts/infisical -p test_secrets.py"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -22,7 +27,7 @@
     "@mantine/hooks": "^9.5.1",
     "@mantine/notifications": "^9.5.1",
     "@tabler/icons-react": "^3.46.0",
-    "next": "16.3.0",
+    "next": "16.3.6",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "zod": "^4.4.3"
@@ -32,10 +37,10 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "eslint": "^9.39.5",
-    "eslint-config-next": "16.3.0",
+    "eslint-config-next": "16.3.6",
     "playwright": "^1.62.1",
     "typescript": "^5.9.3",
     "vite": "8.2.1",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   }
 }

@@ -3,3 +3,10 @@ ignoredBuiltDependencies:
   - unrs-resolver
 minimumReleaseAge: 10080
 blockExoticSubdeps: true
+
+# User-approved security patch exception; all other packages retain the age hold.
+minimumReleaseAgeExclude:
+  - source-map-js@1.2.2
+
+overrides:
+  source-map-js: 1.2.2

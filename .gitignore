@@ -46,3 +46,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Isolated dev output and Python launcher caches
+.next-dev-*/
+__pycache__/

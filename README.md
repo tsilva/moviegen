@@ -10,24 +10,22 @@ Projects are stored in a folder outside this repository. The app keeps a JSON ma
 
 ```bash
 pnpm install
-keyenv doctor
-keyenv run -- pnpm dev
+pnpm dev --port auto
 ```
-
-Open [http://localhost:3000](http://localhost:3000).
 
 To open a project automatically on startup, set `MOVIEGEN_PROJECT_PATH` to an absolute path outside this repository:
 
 ```bash
-MOVIEGEN_PROJECT_PATH=/absolute/path/to/moviegen-project pnpm dev
+MOVIEGEN_PROJECT_PATH=/absolute/path/to/moviegen-project pnpm dev --port auto
 ```
 
 ## Commands
 
 ```bash
-pnpm dev             # start the local Next.js app
+pnpm dev --port auto
 pnpm build           # build the production app
-pnpm start           # run the production build
+pnpm build:secrets   # build using moviegen-production → Production → /
+pnpm start --port auto # run that production build on a persistent host
 pnpm lint            # run ESLint
 pnpm test            # run Vitest tests
 pnpm check:no-media  # check git history for committed media files
@@ -36,8 +34,6 @@ pnpm check:no-media  # check git history for committed media files
 ## Notes
 
 - Use `pnpm`; this repo includes `pnpm-lock.yaml` and `pnpm-workspace.yaml`.
-- Private values declared in `.keyenv.toml` live in macOS Keychain and are injected with `keyenv run -- ...`; Node reads them through `process.env`.
-- `ATLAS_API_KEY` or `ATLASCLOUD_API_KEY` is required for Atlas Cloud generation; keep the active local key in Keychain rather than `.env`.
 - `ATLAS_BASE_URL`, model IDs, Seedance defaults, `FFMPEG_PATH`, and `FFPROBE_PATH` can be overridden with environment variables.
 - `NEXT_PUBLIC_GA_MEASUREMENT_ID` enables GA4 page-view tracking when configured.
 - Project paths must be absolute and outside the app workspace.
@@ -52,3 +48,5 @@ pnpm check:no-media  # check git history for committed media files
 ## License
 
 No license file is currently included.
+
+Moviegen requires persistent project folders and local ffmpeg/ffprobe. Its existing Vercel project does not provide that runtime; this migration does not deploy the editor to an ephemeral filesystem.
