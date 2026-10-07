@@ -1,6 +1,10 @@
-<div align="center">
+<p align="center">
   <img src="./logo.png" alt="moviegen logo" width="420" />
-</div>
+  <br />
+  <!-- repo-tagline:start -->
+  <strong>🎬 Plan, generate, and render short frame-to-frame movies 🎞️</strong>
+  <!-- repo-tagline:end -->
+</p>
 
 moviegen is a local Next.js workspace for planning and generating short frame-to-frame movie sequences. It lets you write frame prompts, attach reference images, generate still frames and transition clips through Atlas Cloud, review versions, approve the best assets, and render a final MP4.
 
