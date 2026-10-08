@@ -19,7 +19,7 @@ test("formerly vulnerable dependency families stay on patched releases", () => {
   assert.deepEqual(lockedVersions("brace-expansion"), ["1.1.21", "5.0.12"]);
   assert.deepEqual(lockedVersions("js-yaml"), ["4.3.2"]);
   assert.deepEqual(lockedVersions("nanoid"), ["3.3.18", "3.3.19"]);
-  assert.deepEqual(lockedVersions("next"), ["16.3.6"]);
+  assert.deepEqual(lockedVersions("next"), ["16.3.8"]);
   assert.deepEqual(lockedVersions("postcss"), ["8.5.23", "8.5.26"]);
   assert.deepEqual(lockedVersions("sharp"), ["0.35.5"]);
   assert.deepEqual(lockedVersions("vite"), ["8.2.1"]);
