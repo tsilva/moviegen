@@ -40,6 +40,7 @@ test("formerly vulnerable dependency families stay on reviewed patched branches"
     "vite": {8: "8.2.4"},
     "vitest": {4: "4.1.12"},
     "@vitest/mocker": {4: "4.1.12"},
+    "zod": {4: "4.6.6"},
   };
   for (const [name, branches] of Object.entries(floors)) requirePatched(name, branches);
 });
