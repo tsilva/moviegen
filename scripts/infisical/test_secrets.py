@@ -56,13 +56,19 @@ class SecretTests(unittest.TestCase):
             execute.assert_not_called()
 
     def test_start_fetches_production_and_uses_auto_port(self):
-        with patch('run.sys.argv',['run.py','start','--port','auto']),patch('run.Production') as client,patch('run.Infisical') as dev,patch('run.os.chdir'),patch('run.os.execvpe') as execute:
+        with patch('run.sys.argv',['run.py','start','--port','auto']),patch('run.verify_production',return_value='a'*40),patch('run.require_built_commit'),patch('run.Production') as client,patch('run.Infisical') as dev,patch('run.os.chdir'),patch('run.os.execvpe') as execute:
             client.return_value.read.return_value={'ATLAS_API_KEY':VALUE}
             launcher.main()
             dev.assert_not_called()
             args=execute.call_args.args
             self.assertEqual(args[1],['pnpm','run','start:app','--port','auto'])
             self.assertEqual(args[2]['ATLAS_API_KEY'],VALUE)
+
+    def test_failed_production_gate_prevents_credential_fetch_and_start(self):
+        with patch('run.sys.argv',['run.py','start']),patch('run.verify_production',side_effect=SecretError('CI held')),patch('run.Production') as client,patch('run.os.execvpe') as execute:
+            with self.assertRaises(SecretError):launcher.main()
+            client.assert_not_called()
+            execute.assert_not_called()
 
 
 if __name__=='__main__':

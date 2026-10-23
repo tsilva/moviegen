@@ -1,10 +1,12 @@
 """Fetch development secrets in memory, then replace this process with the app."""
 
 import os
+import subprocess
 import sys
 
 from common import Infisical, ROOT, SecretError, application_environment
 from production import Production
+from production_gate import require_built_commit, verify_production
 
 COMMANDS = {
     "dev": ["pnpm", "run", "dev:app", "--port", "auto"],
@@ -31,11 +33,26 @@ def selected_command(arguments):
 
 def main():
     command = selected_command(sys.argv[1:])
+    production_sha = None
+    if sys.argv[1] in ("build", "start"):
+        production_sha = verify_production()
+        if sys.argv[1] == "start":
+            require_built_commit(production_sha)
     client = Production() if sys.argv[1] in ("build", "start") else Infisical()
     environment = application_environment(client.read())
     if sys.argv[1] == "dev":
         environment["NEXT_DEV_OUTPUT_DIR"] = f".next-dev-{os.getpid()}"
     os.chdir(ROOT)
+    if sys.argv[1] == "build":
+        result = subprocess.run(command, env=environment)
+        if result.returncode:
+            raise SystemExit(result.returncode)
+        # Never let a build produced from a changed checkout authorize start.
+        if verify_production() != production_sha:
+            raise SecretError("Production changed during build; rebuild after CI passes.")
+        marker = ROOT / ".next" / ".production-commit"
+        marker.write_text(production_sha + "\n")
+        return
     os.execvpe(command[0], command, environment)
 
 

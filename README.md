@@ -28,14 +28,17 @@ MOVIEGEN_PROJECT_PATH=/absolute/path/to/moviegen-project pnpm dev --port auto
 ```bash
 pnpm dev --port auto
 pnpm build           # build the production app
-pnpm build:secrets   # build using moviegen-production → Production → /
-pnpm start --port auto # run that production build on a persistent host
+pnpm production:check # require clean, current main with successful exact-commit CI
+pnpm build:secrets   # CI gate, then moviegen-production → Production → /
+pnpm start --port auto # CI gate, then run the matching approved build locally
 pnpm lint            # run ESLint
 pnpm test            # run Vitest tests
 pnpm check:no-media  # check git history for committed media files
 ```
 
 ## Notes
+
+- Production remains local, with persistent project folders and ffmpeg. GitHub CI gates secret scanning, dependency audit, tests, lint, type checking and a credential-free build. The Production launcher checks the exact current GitHub `main` commit before reading Infisical; `start` also requires the matching `build:secrets` artifact. Push reviewed changes and wait for CI, then run the commands above locally. No Vercel Production workflow or deployment token is installed.
 
 - Use `pnpm`; this repo includes `pnpm-lock.yaml` and `pnpm-workspace.yaml`.
 - `ATLAS_BASE_URL`, model IDs, Seedance defaults, `FFMPEG_PATH`, and `FFPROBE_PATH` can be overridden with environment variables.

@@ -14,15 +14,34 @@ function lockedVersions(packageName) {
   return [...new Set([...lockfile.matchAll(pattern)].map((match) => match[1]))].sort();
 }
 
-test("formerly vulnerable dependency families stay on patched releases", () => {
-  assert.deepEqual(lockedVersions("@babel/core"), ["7.29.7"]);
-  assert.deepEqual(lockedVersions("brace-expansion"), ["1.1.21", "5.0.12"]);
-  assert.deepEqual(lockedVersions("js-yaml"), ["4.3.2"]);
-  assert.deepEqual(lockedVersions("nanoid"), ["3.3.18", "3.3.19"]);
-  assert.deepEqual(lockedVersions("next"), ["16.3.8"]);
-  assert.deepEqual(lockedVersions("postcss"), ["8.5.23", "8.5.26"]);
-  assert.deepEqual(lockedVersions("sharp"), ["0.35.5"]);
-  assert.deepEqual(lockedVersions("vite"), ["8.2.1"]);
+function requirePatched(packageName, floors) {
+  const versions = lockedVersions(packageName);
+  assert.ok(versions.length, `missing ${packageName}`);
+  for (const version of versions) {
+    assert.match(version, /^\d+\.\d+\.\d+$/);
+    const actual = version.split(".").map(Number);
+    const floor = floors[actual[0]];
+    assert.ok(floor, `unreviewed branch ${packageName}@${version}`);
+    const minimum = floor.split(".").map(Number);
+    const differing = actual.findIndex((value, index) => value !== minimum[index]);
+    assert.ok(differing === -1 || actual[differing] > minimum[differing], `${packageName}@${version} is below ${floor}`);
+  }
+}
+
+test("formerly vulnerable dependency families stay on reviewed patched branches", () => {
+  const floors = {
+    "@babel/core": {7: "7.29.7"},
+    "brace-expansion": {1: "1.1.21", 5: "5.0.12"},
+    "js-yaml": {4: "4.3.2"},
+    "nanoid": {3: "3.3.18"},
+    "next": {16: "16.4.1"},
+    "postcss": {8: "8.5.23"},
+    "sharp": {0: "0.35.5"},
+    "vite": {8: "8.2.4"},
+    "vitest": {4: "4.1.12"},
+    "@vitest/mocker": {4: "4.1.12"},
+  };
+  for (const [name, branches] of Object.entries(floors)) requirePatched(name, branches);
 });
 
 test("the complete dependency graph has no known vulnerabilities", () => {
