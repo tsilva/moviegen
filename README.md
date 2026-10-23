@@ -38,7 +38,7 @@ pnpm check:no-media  # check git history for committed media files
 
 ## Notes
 
-- Production remains local, with persistent project folders and ffmpeg. GitHub CI gates secret scanning, dependency audit, tests, lint, type checking and a credential-free build. The Production launcher checks the exact current GitHub `main` commit before reading Infisical; `start` also requires the matching `build:secrets` artifact. Push reviewed changes and wait for CI, then run the commands above locally. No Vercel Production workflow or deployment token is installed.
+- Production remains local, with persistent project folders and ffmpeg. GitHub CI gates secret scanning, dependency audit, tests, lint, type checking and a credential-free build. The Production launcher checks the exact current GitHub `main` commit before reading Infisical; `start` also requires the matching `build:secrets` artifact. Push reviewed changes and wait for CI, then run the commands above locally. Direct Vercel Git builds are disabled; no Vercel Production workflow or deployment token is installed.
 
 - Use `pnpm`; this repo includes `pnpm-lock.yaml` and `pnpm-workspace.yaml`.
 - `ATLAS_BASE_URL`, model IDs, Seedance defaults, `FFMPEG_PATH`, and `FFPROBE_PATH` can be overridden with environment variables.
