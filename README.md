@@ -38,6 +38,8 @@ pnpm check:no-media  # check git history for committed media files
 
 ## Notes
 
+Dependency security pins `minimatch` 11.0.1 and its nonrecursive matcher 1.0.1. Small pnpm patches retain legacy CommonJS/ESM matcher imports and migrate the import lint rule to `Minimatch.match`; the removed regex engine is not restored. The seven-day package hold and existing exception are retained; the new exceptions cover only these exact user-approved versions.
+
 - Production remains local, with persistent project folders and ffmpeg. GitHub CI gates secret scanning, dependency audit, tests, lint, type checking and a credential-free build. Zod 4.6.7 addresses the collection-validation advisory while preserving the seven-day package-age rule. The Production launcher checks the exact current GitHub `main` commit before reading Infisical; `start` also requires the matching `build:secrets` artifact. Push reviewed changes and wait for CI, then run the commands above locally. Direct Vercel Git builds are disabled; no Vercel Production workflow or deployment token is installed.
 - Local Production commands require Git and the GitHub CLI (`gh`) signed in with repository access, plus the existing human Infisical login. Verification reads CI through `gh`; credentials stay in the native login stores.
 
@@ -55,6 +57,7 @@ pnpm check:no-media  # check git history for committed media files
 
 ## License
 
-No license file is currently included.
 
 Moviegen requires persistent project folders and local ffmpeg/ffprobe. Its existing Vercel project does not provide that runtime; this migration does not deploy the editor to an ephemeral filesystem.
+
+[MIT License](LICENSE).

@@ -41,6 +41,8 @@ test("formerly vulnerable dependency families stay on reviewed patched branches"
     "vitest": {4: "4.1.12"},
     "@vitest/mocker": {4: "4.1.12"},
     "zod": {4: "4.6.6"},
+    "minimatch": {11: "11.0.1"},
+    "@isaacs/nonrecursive-glob-match": {1: "1.0.1"},
   };
   for (const [name, branches] of Object.entries(floors)) requirePatched(name, branches);
 });

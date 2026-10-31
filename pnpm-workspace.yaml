@@ -7,6 +7,11 @@ blockExoticSubdeps: true
 # User-approved security patch exception; all other packages retain the age hold.
 minimumReleaseAgeExclude:
   - source-map-js@1.2.2
+  - minimatch@11.0.1
+  - '@isaacs/nonrecursive-glob-match@1.0.1'
 
 overrides:
+  '@next/eslint-plugin-next>fast-glob': npm:tinyglobby@0.2.15
   source-map-js: 1.2.2
+  minimatch: 11.0.1
+  '@isaacs/nonrecursive-glob-match': 1.0.1
