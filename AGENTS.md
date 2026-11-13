@@ -18,7 +18,3 @@ Production is a persistent local runtime with ffmpeg. `pnpm build:production`
 and `pnpm start:production` retain the clean-current-main and exact-commit CI
 gates; the approved build marker must match before starting. Credentials are
 configured separately from these release checks. Keep Vercel Git builds disabled.
-
-The optional balance check is read-only and returns success/failure only. It does
-not enable generation, media transfer, production access or permission changes.
-A failed route must not trigger raw-key fallback or broader service permissions.
