@@ -4,10 +4,34 @@ from pathlib import Path
 from unittest.mock import patch
 
 import production_gate as gate
-from common import SecretError
+from production_gate import SecretError
 
 
 class ProductionGateTests(unittest.TestCase):
+    def test_build_rechecks_ci_before_recording_the_artifact(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / '.next').mkdir()
+            with patch.object(gate, 'ROOT', root), \
+                    patch.object(gate, 'verify_production', side_effect=['a' * 40, 'b' * 40]), \
+                    patch.object(gate.subprocess, 'run') as run:
+                with self.assertRaises(SecretError):
+                    gate.main(['build'])
+                run.assert_called_once_with(['pnpm', 'run', 'build'], cwd=root, check=True)
+                self.assertFalse((root / '.next/.production-commit').exists())
+
+    def test_invalid_start_and_scope_overrides_never_launch(self):
+        with patch.object(gate, 'verify_production', return_value='a' * 40), \
+                patch.object(gate, 'require_built_commit', side_effect=SecretError('wrong artifact')), \
+                patch.object(gate.os, 'execvp') as launch:
+            with self.assertRaises(SecretError):
+                gate.main(['start', '--port', 'auto'])
+            launch.assert_not_called()
+        with patch.object(gate, 'verify_production') as verify:
+            with self.assertRaises(SecretError):
+                gate.main(['--env', 'prod'])
+            verify.assert_not_called()
+
     def setUp(self):
         self.sha = "a" * 40
         self.repo = {"id": gate.REPOSITORY_ID, "full_name": gate.REPOSITORY}

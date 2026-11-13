@@ -43,9 +43,8 @@ jobs:
       - name: Run tests
         run: pnpm test
 
-      - name: Test secret delivery and local Production gates without credentials
+      - name: Test local Production gates without credentials
         run: |
-          pnpm test:secrets
           pnpm test:production
 
       - name: Lint

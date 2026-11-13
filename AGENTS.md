@@ -8,6 +8,17 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 <!-- END:nextjs-agent-rules -->
 
-## Secrets
+## Runtime and release boundaries
 
-Default local dev uses the pinned Infisical `moviegen`, Development `/`, project through the human CLI login. `build:secrets` and `start` use `moviegen-production`, Production `/`, for a persistent self-hosted runtime. Both Atlas aliases are explicitly set from the application allowlist, including empty values when absent, so stale dotenv credentials cannot return. Never print credentials or create plaintext exports. Preserve project folders/media and never run paid generation or rendering merely to test secret delivery. Vercel's filesystem is not a replacement for Moviegen's persistent local project folders and ffmpeg runtime. Run `test:secrets`, normal app tests, lint, typecheck and build before pushing.
+Normal development and builds use the configured process environment. Keep Atlas
+credentials server-only and never log them or commit plaintext exports. Preserve
+project folders and media; do not perform paid generation or rendering as a test.
+
+Production is a persistent local runtime with ffmpeg. `pnpm build:production`
+and `pnpm start:production` retain the clean-current-main and exact-commit CI
+gates; the approved build marker must match before starting. Credentials are
+configured separately from these release checks. Keep Vercel Git builds disabled.
+
+The optional balance check is read-only and returns success/failure only. It does
+not enable generation, media transfer, production access or permission changes.
+A failed route must not trigger raw-key fallback or broader service permissions.

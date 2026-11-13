@@ -5,7 +5,13 @@ import re
 import subprocess
 from pathlib import Path
 
-from common import ROOT, SecretError
+import os
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+
+class SecretError(Exception):
+    """Fixed, credential-free release diagnostics."""
 
 REPOSITORY = "tsilva/moviegen"
 REPOSITORY_ID = 1334322845
@@ -58,12 +64,31 @@ def verify_production():
 def require_built_commit(sha):
     marker = ROOT / ".next" / ".production-commit"
     if not marker.exists() or marker.read_text().strip() != sha:
-        raise SecretError("Build this approved commit with pnpm build:secrets before starting Production.")
+        raise SecretError("Build this approved commit with pnpm build:production before starting Production.")
+
+
+def main(arguments=None):
+    arguments = sys.argv[1:] if arguments is None else arguments
+    if arguments not in ([], ["build"], ["start", "--port", "auto"]):
+        raise SecretError("Use check, build, or start --port auto; scope overrides are rejected.")
+    sha = verify_production()
+    if not arguments:
+        print("Production CI approved: " + sha)
+        return
+    if arguments[0] == "build":
+        subprocess.run(["pnpm", "run", "build"], cwd=ROOT, check=True)
+        if verify_production() != sha:
+            raise SecretError("Production changed during build; repeat the approved build.")
+        (ROOT / ".next" / ".production-commit").write_text(sha + "\n")
+        return
+    require_built_commit(sha)
+    os.chdir(ROOT)
+    os.execvp("pnpm", ["pnpm", "run", "start", "--port", "auto"])
 
 
 if __name__ == "__main__":
     try:
-        print("Production CI approved: " + verify_production())
+        main()
     except Exception as error:
         print(str(error) if isinstance(error, SecretError) else "Production verification failed; details suppressed.")
         raise SystemExit(1)
