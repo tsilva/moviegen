@@ -42,6 +42,33 @@ class ProductionGateTests(unittest.TestCase):
     def responses(self, runs=None):
         return [self.repo, self.ref, {"workflow_runs": runs or [self.run]}, self.ref]
 
+    def test_public_github_transport_ignores_existing_login(self):
+        with patch.dict(gate.os.environ, {"GH_TOKEN": "fixture-token", "GITHUB_TOKEN": "fixture-other-token"}), \
+                patch.object(gate.http.client, "HTTPSConnection") as connect, \
+                patch.object(gate.subprocess, "run") as run:
+            connection = connect.return_value
+            response = connection.getresponse.return_value.__enter__.return_value
+            response.status = 200
+            response.read.return_value = b'{"id":1334322845}'
+            self.assertEqual(gate.api("repos/tsilva/moviegen"), {"id": gate.REPOSITORY_ID})
+            connect.assert_called_once_with("api.github.com", timeout=25)
+            self.assertEqual(connection.request.call_args.args, ("GET", "/repos/tsilva/moviegen"))
+            self.assertNotIn("authorization", {k.lower() for k in connection.request.call_args.kwargs["headers"]})
+            run.assert_not_called()
+            connection.close.assert_called_once()
+
+    def test_public_github_transport_fails_closed_on_redirect_rate_limit_and_bad_json(self):
+        for status, body in ((302, b"private redirect"), (403, b"private error"),
+                             (200, b"malformed"), (200, b"[]")):
+            with self.subTest(status=status, body=body), patch.object(gate.http.client, "HTTPSConnection") as connect:
+                connection = connect.return_value
+                response = connection.getresponse.return_value.__enter__.return_value
+                response.status, response.read.return_value = status, body
+                with self.assertRaisesRegex(SecretError, "Production GitHub verification failed"):
+                    gate.api("repos/tsilva/moviegen")
+                connect.assert_called_once()
+                connection.close.assert_called_once()
+
     def test_clean_current_successful_main_is_approved(self):
         with patch.object(gate, "command", side_effect=["main", "", self.sha]), patch.object(gate, "api", side_effect=self.responses()):
             self.assertEqual(gate.verify_production(), self.sha)

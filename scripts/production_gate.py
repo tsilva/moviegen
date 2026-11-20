@@ -1,5 +1,7 @@
 """Permit local Production only for the clean, successful current main commit."""
 
+from contextlib import closing
+import http.client
 import json
 import re
 import subprocess
@@ -15,6 +17,7 @@ class SecretError(Exception):
 
 REPOSITORY = "tsilva/moviegen"
 REPOSITORY_ID = 1334322845
+GITHUB_RESPONSE_LIMIT = 4 * 1024 * 1024
 
 
 def command(arguments):
@@ -26,8 +29,23 @@ def command(arguments):
 
 def api(path):
     try:
-        return json.loads(command(["gh", "api", path]))
-    except (ValueError, subprocess.SubprocessError):
+        with closing(http.client.HTTPSConnection("api.github.com", timeout=25)) as connection:
+            connection.request("GET", "/" + path, headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "moviegen-production-gate",
+                "X-GitHub-Api-Version": "2022-11-28",
+            })
+            with connection.getresponse() as response:
+                if response.status != 200:
+                    raise ValueError
+                raw = response.read(GITHUB_RESPONSE_LIMIT + 1)
+        if len(raw) > GITHUB_RESPONSE_LIMIT:
+            raise ValueError
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError
+        return data
+    except (OSError, ValueError, http.client.HTTPException):
         raise SecretError("Production GitHub verification failed; no credentials fetched.") from None
 
 
