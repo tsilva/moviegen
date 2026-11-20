@@ -6,59 +6,27 @@
   <!-- repo-tagline:end -->
 </p>
 
-moviegen is a local Next.js workspace for planning and generating short frame-to-frame movie sequences. It lets you write frame prompts, attach reference images, generate still frames and transition clips through Atlas Cloud, review versions, approve the best assets, and render a final MP4.
+Moviegen is a local workspace for making short videos frame by frame.
+Write prompts, attach references, review generated frames and transitions,
+and render selected assets to MP4.
 
-Projects are stored in a folder outside this repository. The app keeps a JSON manifest plus generated media assets in that project folder, while the repo stays focused on the editor, API routes, generation pipeline, and tests.
+## Run locally
 
-## Install
+From a checkout:
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile
 pnpm dev --port auto
 ```
 
-To open a project automatically on startup, set `MOVIEGEN_PROJECT_PATH` to an absolute path outside this repository:
+Open the printed URL. Open or create a project in an absolute path outside
+the repository. Its manifest and media stay in that folder. Generation uses
+Atlas Cloud with configured server credentials. Final rendering requires
+`ffmpeg` and `ffprobe`.
 
-```bash
-MOVIEGEN_PROJECT_PATH=/absolute/path/to/moviegen-project pnpm dev --port auto
-```
-
-## Commands
-
-```bash
-pnpm dev --port auto
-pnpm build           # build the production app
-pnpm production:check # require clean, current main with successful exact-commit CI
-pnpm build:production # exact-commit CI gate, then build using configured environment
-pnpm start --port auto # run the built app locally
-pnpm start:production # CI gate, then run the matching approved Production build
-pnpm lint            # run ESLint
-pnpm test            # run Vitest tests
-pnpm check:no-media  # check git history for committed media files
-```
-
-## Notes
-
-Dependency security pins `minimatch` 11.0.1 and its nonrecursive matcher 1.0.1. Small pnpm patches retain legacy CommonJS/ESM matcher imports and migrate the import lint rule to `Minimatch.match`; the removed regex engine is not restored. The seven-day package hold and existing exception are retained; the new exceptions cover only these exact user-approved versions.
-
-- Production remains local, with persistent project folders and ffmpeg. GitHub CI gates secret scanning, dependency audit, tests, lint, type checking and a credential-free build. Zod 4.6.7 addresses the collection-validation advisory while preserving the seven-day package-age rule. The explicit Production commands check the exact current GitHub `main` commit and successful CI; starting Production also requires the matching approved build artifact. Push reviewed changes and wait for CI, then run the commands above locally. Direct Vercel Git builds are disabled; no Vercel Production workflow or deployment token is installed.
-- Local Production checks require Git, Python 3 and access to GitHub's public API. Configure Atlas credentials separately in the server environment.
-
-- Use `pnpm`; this repo includes `pnpm-lock.yaml` and `pnpm-workspace.yaml`.
-- `ATLAS_BASE_URL`, model IDs, Seedance defaults, `FFMPEG_PATH`, and `FFPROBE_PATH` can be overridden with environment variables.
-- `NEXT_PUBLIC_GA_MEASUREMENT_ID` enables GA4 page-view tracking when configured.
-- Project paths must be absolute and outside the app workspace.
-- Project folders contain `manifest.json`, `frames/`, `transitions/`, `deleted/`, and final renders under `final/`.
-- Final video rendering uses `ffmpeg`; media probing uses `ffprobe`.
-- Generated media should not be committed. `architecture.png` is the only tracked PNG allowed by the media guard.
-
-## Architecture
-
-![moviegen architecture diagram](./architecture.png)
+See the [development guide](docs/development.md) for environment settings,
+project layout, checks, and the local production workflow.
 
 ## License
-
-
-Moviegen requires persistent project folders and local ffmpeg/ffprobe. Its existing Vercel project does not provide that runtime; this migration does not deploy the editor to an ephemeral filesystem.
 
 [MIT License](LICENSE).
